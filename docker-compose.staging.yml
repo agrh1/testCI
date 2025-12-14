@@ -22,7 +22,7 @@ services:
       FLASK_ENV: ${APP_ENV:-staging}
     ports:
       # порт staging-сервиса наружу: 8001
-      - "8001:8000"
+      - "${APP_ENV:-8001}:8000"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health || exit 1"]
