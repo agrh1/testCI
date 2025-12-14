@@ -2,7 +2,9 @@ name: CI/CD — tests → build → push
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main
+      - staging
 
 jobs:
   test-build-push:
@@ -64,8 +66,11 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+            # тег по имени ветки:
+            #   main    -> :main
+            #   staging -> :staging
           tags: |
-            ${{ env.IMAGE_WEB }}:main
-            ${{ env.IMAGE_WEB }}:${{ steps.vars.outputs.sha_tag }}
-            ${{ env.IMAGE_BOT }}:main
-            ${{ env.IMAGE_BOT }}:${{ steps.vars.outputs.sha_tag }}
+            ${{ env.IMAGE_WEB }}:${{ github.ref_name }}
+            ${{ env.IMAGE_WEB }}:sha-${{ github.sha }}
+            ${{ env.IMAGE_BOT }}:${{ github.ref_name }}
+            ${{ env.IMAGE_BOT }}:sha-${{ github.sha }}
