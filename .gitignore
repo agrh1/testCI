@@ -1,9 +1,26 @@
-__pycache__
-.venv
-myapp.egg-info
-.ruff_cache
-.pytest_cache
-.DS_Store
-.vscode
-.idea
+# Виртуальное окружение
+.venv/
+venv/
+
+# Python-кеши
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Логи
+*.log
+
+# Конфиги окружения (секреты, токены и т.п.)
 .env
+
+# Docker-артефакты (на всякий случай)
+*.pid
+
+# IDE и редакторы
+.vscode/
+.idea/
+*.iml
+
+# Системные файлы macOS
+.DS_Store

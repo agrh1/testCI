@@ -1,0 +1,21 @@
+# Локальное виртуальное окружение
+.venv
+venv
+
+# Кеши Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Гит и прочее
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.iml
+
+# Логи
+*.log
