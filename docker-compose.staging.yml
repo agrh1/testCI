@@ -11,9 +11,8 @@
 services:
 
   web-staging:
-<<<<<<< HEAD
     image: ghcr.io/agrh1/testci-web:staging
->>>>>>> staging
+
     container_name: cd-demo-web-staging
 
     env_file:
@@ -21,19 +20,15 @@ services:
 
     environment:
       FLASK_ENV: ${APP_ENV:-staging}
-
     ports:
       # порт staging-сервиса наружу: 8001
       - "${APP_PORT:-8001}:8000"
-
     restart: unless-stopped
-
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health || exit 1"]
       interval: 30s
       timeout: 3s
       retries: 3
-
     labels:
       # тот же label → watchtower будет обновлять staging вместе с prod
       com.centurylinklabs.watchtower.enable: "true"
@@ -42,11 +37,8 @@ services:
   bot-staging:
 
     image: ghcr.io/agrh1/testci-bot:staging
->>>>>>> staging
     container_name: cd-demo-bot-staging
-
     command: ["python", "bot.py"]
-
     env_file:
       - /opt/testci/.envs/.staging.env
 
