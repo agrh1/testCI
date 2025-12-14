@@ -11,7 +11,7 @@ def health():
 
 @app.route("/")
 def index():
-    return "Hello from CD demo!", 200
+    return "Hello from CD demo v2!", 200
 
 
 if __name__ == "__main__":

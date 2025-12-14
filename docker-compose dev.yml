@@ -4,7 +4,7 @@ services:
   web:
     # Пока в dev будем строить образ прямо из текущей папки.
     # В проде здесь будет image: ghcr.io/... (поменяем позже).
-    image: ghcr.io/agrh1/testci-web:main
+    build: .
     container_name: testci
 
     # Подключаем .env, чтобы внутрь контейнера попали переменные окружения.
@@ -34,7 +34,7 @@ services:
       com.centurylinklabs.watchtower.enable: "true"
 
   bot:
-    image: ghcr.io/agrh1/testci-bot:main
+    build: .
     container_name: cd-demo-bot
     # Тот же образ, что и web (у нас один Dockerfile),
     # но CMD будет другим (override).
@@ -53,32 +53,3 @@ services:
     restart: unless-stopped
     labels:
       com.centurylinklabs.watchtower.enable: "true"
-  
-  watchtower:  
-    image: containrrr/watchtower
-    container_name: cd-demo-watchtower
-
-    # Доступ к Docker-daemon’у — критично, иначе Watchtower ничего делать не сможет
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-        
-    # Базовые настройки
-    environment:
-      DOCKER_API_VERSION: "1.44"
-      # Проверять обновления каждые 300 секунд (5 минут)
-      WATCHTOWER_POLL_INTERVAL: 300
-
-      # Чистить старые образы после обновления
-      WATCHTOWER_CLEANUP: "true"
-
-      # При неудачном обновлении пробовать откатиться на предыдущий образ
-      WATCHTOWER_ROLLBACK: "true"
-
-      # Следить только за контейнерами с label `com.centurylinklabs.watchtower.enable=true`
-      WATCHTOWER_LABEL_ENABLE: "true"
-
-    restart: unless-stopped
-
-    labels:
-      # себя самого обновлять не будем, чтобы не поймать странные эффекты
-      com.centurylinklabs.watchtower.enable: "false"
