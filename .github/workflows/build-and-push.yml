@@ -66,10 +66,10 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: 
             # тег по имени ветки:
             #   main    -> :main
             #   staging -> :staging
+          tags: |
             ${{ env.IMAGE_WEB }}:${{ github.ref_name }}
             ${{ env.IMAGE_WEB }}:sha-${{ github.sha }}
             ${{ env.IMAGE_BOT }}:${{ github.ref_name }}
