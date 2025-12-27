@@ -16,7 +16,7 @@ services:
     container_name: cd-demo-web-staging
 
     env_file:
-      - /opt/testci/.envs/.staging.env
+      - /opt/testci/.envs/.env.staging
 
     environment:
       FLASK_ENV: ${APP_ENV:-staging}
@@ -40,7 +40,7 @@ services:
     container_name: cd-demo-bot-staging
     command: ["python", "bot.py"]
     env_file:
-      - /opt/testci/.envs/.staging.env
+      - /opt/testci/.envs/.env.staging
 
     environment:
       WEB_HOST: "web-staging"   # важно: обращаемся к web-staging, а не к web (prod)

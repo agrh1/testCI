@@ -21,7 +21,7 @@ services:
 
     # Подгружаем переменные окружения из .env на сервере
     env_file:
-      - /opt/testci/.envs/.prod.env
+      - /opt/testci/.envs/.env.prod
 
     environment:
       # для Flask (production/debug)
@@ -54,7 +54,7 @@ services:
     command: ["python", "bot.py"]
 
     env_file:
-      - /opt/testci/.envs/.prod.env
+      - /opt/testci/.envs/.env.prod
 
     environment:
       WEB_HOST: "web"
