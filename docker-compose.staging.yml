@@ -11,7 +11,7 @@
 services:
 
   web-staging:
-    image: ghcr.io/agrh1/testci-web:staging
+    image: ghcr.io/agrh1/testCI:web-staging
 
     container_name: cd-demo-web-staging
 
@@ -36,7 +36,7 @@ services:
 
   bot-staging:
 
-    image: ghcr.io/agrh1/testci-bot:staging
+    image: ghcr.io/agrh1/testCI:bot-staging
     container_name: cd-demo-bot-staging
     command: ["python", "bot.py"]
     env_file:

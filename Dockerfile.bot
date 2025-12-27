@@ -1,0 +1,18 @@
+# Dockerfile.bot
+# Образ для Telegram-бота (aiogram).
+# Отдельный образ, чтобы web и bot могли версионироваться независимо.
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY . /app
+
+# Запуск бота
+CMD ["python", "-u", "bot.py"]
