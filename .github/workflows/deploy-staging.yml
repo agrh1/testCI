@@ -17,6 +17,11 @@ jobs:
       - name: Checkout репозитория
         uses: actions/checkout@v4
 
+      - name: Подготовка имени образа (lowercase для GHCR)
+        run: |
+          echo "IMAGE_REPO=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "Будем пушить в: $IMAGE_REPO"
+
       - name: Логин в GHCR
         uses: docker/login-action@v3
         with:
@@ -34,8 +39,8 @@ jobs:
           file: ./Dockerfile.web
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:web-sha-${{ github.sha }}
-            ghcr.io/${{ github.repository }}:web-staging
+            ${{ env.IMAGE_REPO }}:web-sha-${{ github.sha }}
+            ${{ env.IMAGE_REPO }}:web-staging
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -46,7 +51,7 @@ jobs:
           file: ./Dockerfile.bot
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:bot-sha-${{ github.sha }}
-            ghcr.io/${{ github.repository }}:bot-staging
+            ${{ env.IMAGE_REPO }}:bot-sha-${{ github.sha }}
+            ${{ env.IMAGE_REPO }}:bot-staging
           cache-from: type=gha
           cache-to: type=gha,mode=max
