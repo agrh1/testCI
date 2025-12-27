@@ -13,7 +13,7 @@
 Тесты для веб-приложения (app.py).
 """
 
-import sys
+# import sys
 # from pathlib import Path
 
 from app import app
