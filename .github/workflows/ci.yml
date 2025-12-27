@@ -28,7 +28,29 @@ jobs:
         run: |
           ruff check .
 
+      # Запускаем web-сервис локально в CI, чтобы /health был доступен для тестов.
+      - name: Запуск web (gunicorn) в фоне
+        env:
+          WEB_PORT: "8000"
+        run: |
+          # Стартуем gunicorn в фоне
+          nohup gunicorn -b 127.0.0.1:8000 app:app > gunicorn.log 2>&1 &
+          # Дадим сервису время подняться
+          for i in {1..20}; do
+            if curl -fsS http://127.0.0.1:8000/health > /dev/null; then
+              echo "Web is up"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "Web failed to start"
+          echo "---- gunicorn.log ----"
+          tail -n 200 gunicorn.log || true
+          exit 1
+
       - name: Тесты (pytest)
+        env:
+          WEB_TEST_URL: "http://127.0.0.1:8000/health"
         run: |
           pytest -q
 
@@ -41,12 +63,9 @@ jobs:
       - name: Checkout репозитория
         uses: actions/checkout@v4
 
-      # Buildx нужен для кэша и предсказуемой сборки.
       - name: Настройка Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Собираем образ, но не пушим в реестр (пока).
-      # Кэшируем слои через GitHub Actions cache (type=gha), чтобы ускорить повторные сборки.
       - name: Docker build (без push)
         uses: docker/build-push-action@v6
         with:
@@ -54,7 +73,6 @@ jobs:
           file: ./Dockerfile
           push: false
           load: false
-          # Тег чисто для читаемости логов; в реестр не отправляется.
           tags: testci:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
