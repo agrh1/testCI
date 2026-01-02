@@ -1,43 +1,81 @@
-"""
-Telegram-бот (aiogram v3).
-
-Шаг 12:
-- /status показывает ENVIRONMENT и GIT_SHA.
-
-Шаг 13 (с смыслом):
-- /status дополнительно показывает доступность web по:
-  - /health (liveness)
-  - /ready  (readiness)
-
-Важно:
-- bot и web условно зависимые: бот живёт независимо от web.
-"""
-
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import time
 import urllib.request
 from dataclasses import dataclass
-from typing import Any
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message
 
 
+def get_environment() -> str:
+    return os.getenv("ENVIRONMENT", "unknown")
+
+
+def get_git_sha() -> str:
+    return os.getenv("GIT_SHA", "unknown")
+
+
+# -----------------------------
+# Logging
+# -----------------------------
+
+class ContextAdapter(logging.LoggerAdapter):
+    def process(self, msg: str, kwargs: dict) -> tuple[str, dict]:
+        extra = kwargs.get("extra", {})
+        extra.setdefault("environment", get_environment())
+        extra.setdefault("git_sha", get_git_sha())
+        kwargs["extra"] = extra
+        return msg, kwargs
+
+
+def setup_logging() -> ContextAdapter:
+    logger = logging.getLogger("testci.bot")
+    if logger.handlers:
+        return ContextAdapter(logger, {})
+
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        fmt=(
+            "ts=%(asctime)s level=%(levelname)s service=bot "
+            "env=%(environment)s sha=%(git_sha)s "
+            "msg=%(message)s"
+        )
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.propagate = False
+    return ContextAdapter(logger, {})
+
+
+log = setup_logging()
+
+
+# -----------------------------
+# URL building
+# -----------------------------
+
 def _build_url(web_base_url: str, path: str) -> str:
     base = (web_base_url or "").strip()
     if not base:
-        return path  # относительный путь, если WEB_BASE_URL не задан
+        return path
     return base.rstrip("/") + path
 
 
 WEB_BASE_URL = os.getenv("WEB_BASE_URL", "")
-HEALTH_URL = _build_url(WEB_BASE_URL, "/health")  # контракт сохранён
+HEALTH_URL = _build_url(WEB_BASE_URL, "/health")
 READY_URL = _build_url(WEB_BASE_URL, "/ready")
 
+
+# -----------------------------
+# Reply texts (контракты тестов)
+# -----------------------------
 
 def ping_reply_text() -> str:
     return "pong ✅"
@@ -63,10 +101,7 @@ class AppInfo:
 
 
 def get_app_info() -> AppInfo:
-    return AppInfo(
-        environment=os.getenv("ENVIRONMENT", "unknown"),
-        git_sha=os.getenv("GIT_SHA", "unknown"),
-    )
+    return AppInfo(environment=get_environment(), git_sha=get_git_sha())
 
 
 @dataclass(frozen=True)
@@ -76,9 +111,10 @@ class HttpCheck:
     ok: bool
     http_status: int | None = None
     error: str | None = None
+    duration_ms: int | None = None
 
 
-def _sync_fetch_json(url: str, timeout_seconds: float) -> tuple[int, Any]:
+def _sync_fetch_json(url: str, timeout_seconds: float) -> tuple[int, object]:
     req = urllib.request.Request(url, headers={"User-Agent": "testci-bot/1.0"})
     with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
         status = int(resp.status)
@@ -87,22 +123,32 @@ def _sync_fetch_json(url: str, timeout_seconds: float) -> tuple[int, Any]:
 
 
 async def _check_endpoint(name: str, url: str, timeout_seconds: float = 1.5) -> HttpCheck:
-    # Если URL относительный — считаем, что конфиг не настроен (это не “падение web”).
     if url.startswith("/"):
         return HttpCheck(name=name, url=url, ok=False, error="WEB_BASE_URL не задан")
 
+    start = time.perf_counter()
     try:
         http_status, data = await asyncio.to_thread(_sync_fetch_json, url, timeout_seconds)
+        duration_ms = int((time.perf_counter() - start) * 1000)
 
         if name == "web.health":
             ok = http_status == 200 and isinstance(data, dict) and data.get("status") == "ok"
         else:
-            # web.ready: принимаем 200 как ready, 503 как not_ready
             ok = http_status == 200 and isinstance(data, dict) and data.get("ready") is True
 
-        return HttpCheck(name=name, url=url, ok=ok, http_status=http_status, error=None if ok else "Ответ не подтверждает OK")
+        if not ok:
+            return HttpCheck(
+                name=name,
+                url=url,
+                ok=False,
+                http_status=http_status,
+                error="Ответ не подтверждает OK",
+                duration_ms=duration_ms,
+            )
+        return HttpCheck(name=name, url=url, ok=True, http_status=http_status, duration_ms=duration_ms)
     except Exception as e:
-        return HttpCheck(name=name, url=url, ok=False, error=str(e))
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        return HttpCheck(name=name, url=url, ok=False, error=str(e), duration_ms=duration_ms)
 
 
 def format_status_text(app_info: AppInfo, checks: list[HttpCheck]) -> str:
@@ -118,6 +164,8 @@ def format_status_text(app_info: AppInfo, checks: list[HttpCheck]) -> str:
         lines.append(f"  url: {c.url}")
         if c.http_status is not None:
             lines.append(f"  http_status: {c.http_status}")
+        if c.duration_ms is not None:
+            lines.append(f"  duration_ms: {c.duration_ms}")
         if c.error:
             lines.append(f"  error: {c.error}")
     return "\n".join(lines)
@@ -133,28 +181,49 @@ def get_telegram_token() -> str:
 dp = Dispatcher()
 
 
+def _msg_ctx(message: Message) -> str:
+    user_id = getattr(getattr(message, "from_user", None), "id", None)
+    chat_id = getattr(getattr(message, "chat", None), "id", None)
+    return f"user_id={user_id} chat_id={chat_id}"
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message) -> None:
+    log.info("command=/start %s", _msg_ctx(message))
     await message.answer(start_reply_text())
 
 
 @dp.message(Command("ping"))
 async def cmd_ping(message: Message) -> None:
+    log.info("command=/ping %s", _msg_ctx(message))
     await message.answer(ping_reply_text())
 
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message) -> None:
+    log.info("command=/status %s", _msg_ctx(message))
+
     info = get_app_info()
     checks = [
         await _check_endpoint("web.health", HEALTH_URL),
         await _check_endpoint("web.ready", READY_URL),
     ]
+
+    # Логируем итог проверок одной строкой (удобно для grep)
+    log.info(
+        "web_checks health_ok=%s ready_ok=%s health_ms=%s ready_ms=%s",
+        checks[0].ok,
+        checks[1].ok,
+        checks[0].duration_ms,
+        checks[1].duration_ms,
+    )
+
     await message.answer(format_status_text(info, checks))
 
 
 @dp.message(F.text)
 async def fallback(message: Message) -> None:
+    log.info("message=text %s", _msg_ctx(message))
     await message.answer(unknown_reply_text())
 
 
