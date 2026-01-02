@@ -12,10 +12,78 @@ permissions:
   contents: read
   packages: write
 
+env:
+  GHCR_IMAGE: ghcr.io/agrh1/testci
+
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+      bot: ${{ steps.filter.outputs.bot }}
+      shared: ${{ steps.filter.outputs.shared }}
+      any_image: ${{ steps.filter.outputs.web == 'true' || steps.filter.outputs.bot == 'true' || steps.filter.outputs.shared == 'true' }}
+    steps:
+      - name: Checkout (full history for diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Paths filter
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          # ЯВНО задаём диапазон diff именно для push:
+          # from = github.event.before, to = github.sha
+          base: ${{ github.event.before }}
+          ref: ${{ github.sha }}
+          list-files: shell
+          filters: |
+            web:
+              - "app.py"
+              - "Dockerfile.web"
+              - "requirements-web.txt"
+              - "web/**"
+            bot:
+              - "bot.py"
+              - "Dockerfile.bot"
+              - "requirements-bot.txt"
+              - "bot/**"
+            shared:
+              - ".github/workflows/**"
+              - "scripts/**"
+              - "requirements-dev.txt"
+              - "common/**"
+              - "pyproject.toml"
+              - "ruff.toml"
+              - "pytest.ini"
+              - "setup.cfg"
+
+      - name: Debug filter outputs
+        run: |
+          echo "before: ${{ github.event.before }}"
+          echo "sha:    ${{ github.sha }}"
+          echo "web:    ${{ steps.filter.outputs.web }}"
+          echo "bot:    ${{ steps.filter.outputs.bot }}"
+          echo "shared: ${{ steps.filter.outputs.shared }}"
+          echo "any_image: ${{ steps.filter.outputs.web == 'true' || steps.filter.outputs.bot == 'true' || steps.filter.outputs.shared == 'true' }}"
+          echo ""
+          echo "Changed files (git diff --name-only):"
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }} || true
+          echo ""
+          echo "Matched files by filter:"
+          echo "web files:"
+          echo "${{ steps.filter.outputs.web_files }}"
+          echo "bot files:"
+          echo "${{ steps.filter.outputs.bot_files }}"
+          echo "shared files:"
+          echo "${{ steps.filter.outputs.shared_files }}"
+
   ci:
     name: ruff + pytest
     runs-on: ubuntu-latest
+    needs: changes
 
     steps:
       - name: Checkout
@@ -37,10 +105,9 @@ jobs:
           pip install -r requirements-dev.txt
           pip install -r requirements-web.txt
           pip install -r requirements-bot.txt
-      
+
       - name: Check env templates
         run: python scripts/check_env_templates.py
-
 
       - name: Ruff
         run: ruff check .
@@ -51,7 +118,8 @@ jobs:
   build_push:
     name: Build & Push images to GHCR (staging)
     runs-on: ubuntu-latest
-    needs: ci
+    needs: [changes, ci]
+    if: ${{ needs.changes.outputs.any_image == 'true' }}
 
     steps:
       - name: Checkout
@@ -67,8 +135,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # WEB: web-staging + web-sha-<sha>
       - name: Build & push web (staging)
+        if: ${{ needs.changes.outputs.web == 'true' || needs.changes.outputs.shared == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -77,11 +145,13 @@ jobs:
           build-args: |
             GIT_SHA=${{ github.sha }}
           tags: |
-            ghcr.io/agrh1/testci:web-staging
-            ghcr.io/agrh1/testci:web-sha-${{ github.sha }}
+            ${{ env.GHCR_IMAGE }}:web-staging
+            ${{ env.GHCR_IMAGE }}:web-sha-${{ github.sha }}
+          cache-from: type=gha,scope=web-staging
+          cache-to: type=gha,mode=max,scope=web-staging
 
-      # BOT: bot-staging + bot-sha-<sha>
       - name: Build & push bot (staging)
+        if: ${{ needs.changes.outputs.bot == 'true' || needs.changes.outputs.shared == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -90,5 +160,7 @@ jobs:
           build-args: |
             GIT_SHA=${{ github.sha }}
           tags: |
-            ghcr.io/agrh1/testci:bot-staging
-            ghcr.io/agrh1/testci:bot-sha-${{ github.sha }}
+            ${{ env.GHCR_IMAGE }}:bot-staging
+            ${{ env.GHCR_IMAGE }}:bot-sha-${{ github.sha }}
+          cache-from: type=gha,scope=bot-staging
+          cache-to: type=gha,mode=max,scope=bot-staging
