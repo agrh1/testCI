@@ -241,7 +241,6 @@ async def cmd_status(message: Message) -> None:
 
     await message.answer(format_status_text(info, checks, request_id=request_id))
 
-
 @dp.message(F.text)
 async def fallback(message: Message) -> None:
     log.info("message=text %s", _msg_ctx(message))
