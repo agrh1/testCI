@@ -231,9 +231,7 @@ async def cmd_ping(message: Message) -> None:
 async def cmd_status(message: Message) -> None:
     request_id = uuid.uuid4().hex  # <-- единый id на команду
     log.info("command=/status request_id=%s %s", request_id, _msg_ctx(message))
-
     info = get_app_info()
-    
     health_task = _check_endpoint("web.health", HEALTH_URL, request_id=request_id)
     ready_task = _check_endpoint("web.ready", READY_URL, request_id=request_id)
     checks = await asyncio.gather(health_task, ready_task)
