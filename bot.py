@@ -6,6 +6,7 @@ import logging
 import os
 import time
 import urllib.request
+import uuid
 from dataclasses import dataclass
 
 from aiogram import Bot, Dispatcher, F
@@ -112,23 +113,33 @@ class HttpCheck:
     http_status: int | None = None
     error: str | None = None
     duration_ms: int | None = None
+    request_id: str | None = None  # <-- для корреляции
 
 
-def _sync_fetch_json(url: str, timeout_seconds: float) -> tuple[int, object]:
-    req = urllib.request.Request(url, headers={"User-Agent": "testci-bot/1.0"})
+def _sync_fetch_json(url: str, timeout_seconds: float, request_id: str | None) -> tuple[int, object]:
+    headers = {"User-Agent": "testci-bot/1.0"}
+    if request_id:
+        headers["X-Request-ID"] = request_id
+
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
         status = int(resp.status)
         body = resp.read().decode("utf-8")
         return status, json.loads(body)
 
 
-async def _check_endpoint(name: str, url: str, timeout_seconds: float = 1.5) -> HttpCheck:
+async def _check_endpoint(
+    name: str,
+    url: str,
+    request_id: str | None,
+    timeout_seconds: float = 1.5,
+) -> HttpCheck:
     if url.startswith("/"):
-        return HttpCheck(name=name, url=url, ok=False, error="WEB_BASE_URL не задан")
+        return HttpCheck(name=name, url=url, ok=False, error="WEB_BASE_URL не задан", request_id=request_id)
 
     start = time.perf_counter()
     try:
-        http_status, data = await asyncio.to_thread(_sync_fetch_json, url, timeout_seconds)
+        http_status, data = await asyncio.to_thread(_sync_fetch_json, url, timeout_seconds, request_id)
         duration_ms = int((time.perf_counter() - start) * 1000)
 
         if name == "web.health":
@@ -144,18 +155,35 @@ async def _check_endpoint(name: str, url: str, timeout_seconds: float = 1.5) -> 
                 http_status=http_status,
                 error="Ответ не подтверждает OK",
                 duration_ms=duration_ms,
+                request_id=request_id,
             )
-        return HttpCheck(name=name, url=url, ok=True, http_status=http_status, duration_ms=duration_ms)
+        return HttpCheck(
+            name=name,
+            url=url,
+            ok=True,
+            http_status=http_status,
+            duration_ms=duration_ms,
+            request_id=request_id,
+        )
     except Exception as e:
         duration_ms = int((time.perf_counter() - start) * 1000)
-        return HttpCheck(name=name, url=url, ok=False, error=str(e), duration_ms=duration_ms)
+        return HttpCheck(
+            name=name,
+            url=url,
+            ok=False,
+            error=str(e),
+            duration_ms=duration_ms,
+            request_id=request_id,
+        )
 
 
-def format_status_text(app_info: AppInfo, checks: list[HttpCheck]) -> str:
+def format_status_text(app_info: AppInfo, checks: list[HttpCheck], request_id: str) -> str:
     lines = [
         "Статус: ok",
         f"ENVIRONMENT: {app_info.environment}",
         f"GIT_SHA: {app_info.git_sha}",
+        "",
+        f"request_id: {request_id}",
         "",
         "WEB checks:",
     ]
@@ -201,24 +229,25 @@ async def cmd_ping(message: Message) -> None:
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message) -> None:
-    log.info("command=/status %s", _msg_ctx(message))
+    request_id = uuid.uuid4().hex  # <-- единый id на команду
+    log.info("command=/status request_id=%s %s", request_id, _msg_ctx(message))
 
     info = get_app_info()
     checks = [
-        await _check_endpoint("web.health", HEALTH_URL),
-        await _check_endpoint("web.ready", READY_URL),
+        await _check_endpoint("web.health", HEALTH_URL, request_id=request_id),
+        await _check_endpoint("web.ready", READY_URL, request_id=request_id),
     ]
 
-    # Логируем итог проверок одной строкой (удобно для grep)
     log.info(
-        "web_checks health_ok=%s ready_ok=%s health_ms=%s ready_ms=%s",
+        "web_checks request_id=%s health_ok=%s ready_ok=%s health_ms=%s ready_ms=%s",
+        request_id,
         checks[0].ok,
         checks[1].ok,
         checks[0].duration_ms,
         checks[1].duration_ms,
     )
 
-    await message.answer(format_status_text(info, checks))
+    await message.answer(format_status_text(info, checks, request_id=request_id))
 
 
 @dp.message(F.text)
