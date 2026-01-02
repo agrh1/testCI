@@ -216,7 +216,6 @@ async def cmd_start(message: Message) -> None:
     log.info("command=/start %s", _msg_ctx(message))
     await message.answer(start_reply_text())
 
-
 @dp.message(Command("ping"))
 async def cmd_ping(message: Message) -> None:
     log.info("command=/ping %s", _msg_ctx(message))

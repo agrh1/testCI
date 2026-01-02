@@ -45,10 +45,14 @@ jobs:
               - "requirements-bot.txt"
               - "bot/**"
             shared:
-              - "requirements-dev.txt"
-              - "scripts/**"
               - ".github/workflows/**"
-              - "**/*.py"
+              - "scripts/**"
+              - "requirements-dev.txt"
+              - "common/**"
+              - "pyproject.toml"
+              - "ruff.toml"
+              - "pytest.ini"
+              - "setup.cfg"
 
   ci:
     name: ruff + pytest
