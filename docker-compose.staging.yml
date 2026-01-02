@@ -77,3 +77,4 @@ services:
     labels:
       # Сам watchtower обновлять НЕ нужно
       com.centurylinklabs.watchtower.enable: "false"
+

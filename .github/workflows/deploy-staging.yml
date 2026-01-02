@@ -37,6 +37,10 @@ jobs:
           pip install -r requirements-dev.txt
           pip install -r requirements-web.txt
           pip install -r requirements-bot.txt
+      
+      - name: Check env templates
+        run: python scripts/check_env_templates.py
+
 
       - name: Ruff
         run: ruff check .
