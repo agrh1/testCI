@@ -4,6 +4,7 @@ Telegram bot (aiogram v3).
 Шаг 17: управляемая деградация web-зависимых команд.
 - /status всегда работает и показывает состояние web (health/ready)
 - /needs_web — пример web-зависимой команды (блокируется guard'ом)
+- /ping — локальная команда, всегда работает
 """
 
 from __future__ import annotations
@@ -17,14 +18,10 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from bot import ping_reply_text
+from bot import ping_reply_text  # legacy для тестов
 from bot.utils.web_client import WebClient
 from bot.utils.web_guard import WebGuard
 
-
-async def cmd_ping(message: Message) -> None:
-    # Локальная команда: всегда работает, не зависит от web
-    await message.answer(ping_reply_text())
 
 def _get_env(name: str, default: Optional[str] = None, required: bool = False) -> str:
     value = os.getenv(name, default)
@@ -40,8 +37,24 @@ def _format_check_line(title: str, ok: bool, status: Optional[int], duration_ms:
     return f"{icon} {title}: status={status_s}, {duration_ms}ms, request_id={request_id}{err}"
 
 
+def _deps(message: Message) -> tuple[WebClient, WebGuard]:
+    """
+    Достаём зависимости из workflow_data диспетчера.
+    Это штатный способ DI в aiogram v3.
+    """
+    dp = message.dispatcher
+    web_client: WebClient = dp.workflow_data["web_client"]
+    web_guard: WebGuard = dp.workflow_data["web_guard"]
+    return web_client, web_guard
+
+
 async def cmd_start(message: Message) -> None:
-    await message.answer("Привет! Я жив. Команды: /status /needs_web")
+    await message.answer("Привет! Команды: /ping /status /needs_web")
+
+
+async def cmd_ping(message: Message) -> None:
+    # Локальная команда: всегда работает, не зависит от web
+    await message.answer(ping_reply_text())
 
 
 async def cmd_status(message: Message) -> None:
@@ -53,7 +66,7 @@ async def cmd_status(message: Message) -> None:
     git_sha = _get_env("GIT_SHA", "unknown")
     web_base_url = _get_env("WEB_BASE_URL", "http://web:8000")
 
-    web_client: WebClient = message.bot["web_client"]  # type: ignore[assignment]
+    web_client, _ = _deps(message)
     health, ready = await web_client.check_health_ready(force=True)
 
     lines = [
@@ -71,7 +84,7 @@ async def cmd_needs_web(message: Message) -> None:
     """
     Пример web-зависимой команды. На шаге 17 она ничего не делает, кроме демонстрации guard.
     """
-    guard: WebGuard = message.bot["web_guard"]  # type: ignore[assignment]
+    _, guard = _deps(message)
     if not await guard.require_web(message, friendly_name="/needs_web"):
         return
 
@@ -89,18 +102,23 @@ async def main() -> None:
     web_base_url = _get_env("WEB_BASE_URL", "http://web:8000")
 
     # WebClient/WebGuard (шаг 17)
-    web_client = WebClient(base_url=web_base_url, timeout_s=float(os.getenv("WEB_TIMEOUT_S", "1.5")), cache_ttl_s=float(os.getenv("WEB_CACHE_TTL_S", "3.0")))
+    web_client = WebClient(
+        base_url=web_base_url,
+        timeout_s=float(os.getenv("WEB_TIMEOUT_S", "1.5")),
+        cache_ttl_s=float(os.getenv("WEB_CACHE_TTL_S", "3.0")),
+    )
     web_guard = WebGuard(web_client)
 
     bot = Bot(token=token)
     dp = Dispatcher()
 
-    # Кладём зависимости в контекст бота (просто и надёжно)
-    bot["web_client"] = web_client
-    bot["web_guard"] = web_guard
+    # ✅ DI-хранилище: workflow_data
+    dp.workflow_data["web_client"] = web_client
+    dp.workflow_data["web_guard"] = web_guard
 
     # Роутинг команд
     dp.message.register(cmd_start, Command("start"))
+    dp.message.register(cmd_ping, Command("ping"))
     dp.message.register(cmd_status, Command("status"))
     dp.message.register(cmd_needs_web, Command("needs_web"))
 
