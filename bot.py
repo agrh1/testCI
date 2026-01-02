@@ -17,9 +17,9 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from bot import ping_reply_text
 from bot.utils.web_client import WebClient
 from bot.utils.web_guard import WebGuard
-from bot import ping_reply_text
 
 
 async def cmd_ping(message: Message) -> None:
