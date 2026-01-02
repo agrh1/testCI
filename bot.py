@@ -3,13 +3,8 @@ Telegram bot (aiogram v3).
 
 Шаг 17: управляемая деградация web-зависимых команд.
 - /status всегда работает и показывает состояние web (health/ready)
-- /needs_web — пример web-зависимой команды (блокируется guard'ом)
+- /needs_web — пример web-зависимой команды (guard применяется фильтром)
 - /ping — локальная команда, всегда работает
-
-ВАЖНО:
-aiogram v3 умеет DI: если в dp.workflow_data положить объекты,
-то их можно принимать как параметры хендлера.
-Это надёжнее, чем пытаться доставать dispatcher из Message.
 """
 
 from __future__ import annotations
@@ -25,6 +20,7 @@ from aiogram.types import Message
 
 from bot import ping_reply_text  # legacy для тестов
 from bot.utils.web_client import WebClient
+from bot.utils.web_filters import WebReadyFilter
 from bot.utils.web_guard import WebGuard
 
 
@@ -73,14 +69,14 @@ async def cmd_status(message: Message, web_client: WebClient) -> None:
     await message.answer("\n".join(lines))
 
 
-async def cmd_needs_web(message: Message, web_guard: WebGuard) -> None:
+async def cmd_needs_web(message: Message) -> None:
     """
-    Пример web-зависимой команды. На шаге 17 она ничего не делает, кроме демонстрации guard.
-    """
-    if not await web_guard.require_web(message, friendly_name="/needs_web"):
-        return
+    Пример web-зависимой команды.
 
-    await message.answer("web готов ✅ (здесь дальше будет реальная бизнес-логика)")
+    ВАЖНО: здесь НЕТ ручной проверки web.
+    Guard выполняется фильтром WebReadyFilter при регистрации команды.
+    """
+    await message.answer("web готов ✅ (дальше будет реальная бизнес-логика)")
 
 
 async def main() -> None:
@@ -104,7 +100,7 @@ async def main() -> None:
     bot = Bot(token=token)
     dp = Dispatcher()
 
-    # ✅ DI: складываем зависимости сюда
+    # ✅ DI: зависимости для фильтров/хендлеров
     dp.workflow_data["web_client"] = web_client
     dp.workflow_data["web_guard"] = web_guard
 
@@ -112,7 +108,13 @@ async def main() -> None:
     dp.message.register(cmd_start, Command("start"))
     dp.message.register(cmd_ping, Command("ping"))
     dp.message.register(cmd_status, Command("status"))
-    dp.message.register(cmd_needs_web, Command("needs_web"))
+
+    # ✅ web-зависимая команда: guard включён фильтром
+    dp.message.register(
+        cmd_needs_web,
+        Command("needs_web"),
+        WebReadyFilter("/needs_web"),
+    )
 
     logger.info("Bot started. WEB_BASE_URL=%s", web_base_url)
 
