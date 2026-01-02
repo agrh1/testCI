@@ -198,7 +198,6 @@ def format_status_text(app_info: AppInfo, checks: list[HttpCheck], request_id: s
             lines.append(f"  error: {c.error}")
     return "\n".join(lines)
 
-
 def get_telegram_token() -> str:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
