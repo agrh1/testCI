@@ -2,10 +2,15 @@
 Web-сервис (Flask).
 
 Шаг 12:
-- Добавляем ENVIRONMENT=staging|prod|local (или unknown) и показываем его в /status.
+- /status показывает ENVIRONMENT и GIT_SHA.
 
-Требования тестов:
-- Должен существовать endpoint "/" и возвращать 200 + непустой текст.
+Шаг 13:
+- /health = liveness (процесс жив, НЕ проверяем внешние зависимости)
+- /ready  = readiness (сервис готов обслуживать запросы)
+
+Существующие контракты проекта:
+- "/" должен возвращать 200 и непустой текст (есть тест)
+- "/health" уже используется Docker healthcheck'ом (не ломаем)
 """
 
 from __future__ import annotations
@@ -19,41 +24,46 @@ app = Flask(__name__)
 
 
 def get_git_sha() -> str:
-    """Возвращает git sha, проброшенный в контейнер на этапе сборки."""
     return os.getenv("GIT_SHA", "unknown")
 
 
 def get_environment() -> str:
-    """
-    Возвращает окружение.
-
-    Ожидаемые значения: staging | prod | local.
-    Если не задано — unknown (чтобы не падать).
-    """
+    # Ожидаемые значения: staging | prod | local
     return os.getenv("ENVIRONMENT", "unknown")
 
 
 @app.get("/")
 def index() -> tuple[str, int]:
-    """
-    Простой текстовый endpoint.
-
-    Нужен:
-    - для smoke-проверок руками (curl в браузере)
-    - для unit-тестов проекта (ожидают 200 и непустой текст)
-    """
-    return "Hello from CD v5 (PROD CHECK)", 200
+    return "testCI service is running", 200
 
 
 @app.get("/health")
 def health() -> tuple[Any, int]:
-    """Liveness: процесс жив."""
+    """
+    Liveness: отвечает на вопрос "процесс жив?".
+
+    Здесь нельзя делать сетевые запросы и проверять внешние зависимости,
+    чтобы не устроить рестарт-шторм при сбоях вокруг.
+    """
+    return jsonify({"status": "ok"}), 200
+
+
+@app.get("/ready")
+def ready() -> tuple[Any, int]:
+    """
+    Readiness: отвечает на вопрос "сервис готов выполнять работу?".
+
+    Сейчас у web нет обязательных внешних зависимостей (БД/очередь),
+    поэтому /ready == ok.
+
+    В будущем сюда добавятся проверки именно обязательных зависимостей
+    (например, доступность БД), а /health останется простым.
+    """
     return jsonify({"status": "ok"}), 200
 
 
 @app.get("/status")
 def status() -> tuple[Any, int]:
-    """Диагностический endpoint: версия + окружение."""
     payload = {
         "status": "ok",
         "environment": get_environment(),
