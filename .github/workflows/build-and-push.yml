@@ -37,6 +37,10 @@ jobs:
         run: |
           pip install --no-cache-dir -r requirements.txt
 
+      - name: Check env templates
+        run: python scripts/check_env_templates.py
+
+
       # 4. Запускаем pytest (важно: если тесты падают — CI останавливается!)
       - name: Run tests
         run: |
