@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import time
@@ -12,6 +13,8 @@ from aiogram.filters import Command
 from aiogram.types import ErrorEvent, Message
 
 from bot import ping_reply_text
+from bot.utils.escalation import EscalationFilter, EscalationManager
+from bot.utils.notify_router import Destination, explain_matches, parse_rules, pick_destinations
 from bot.utils.polling import PollingState, polling_open_queue_loop
 from bot.utils.sd_web_client import SdWebClient
 from bot.utils.state_store import MemoryStateStore, RedisStateStore, ResilientStateStore, StateStore
@@ -47,13 +50,85 @@ def _format_check_line(
     return f"{icon} {title}: status={status_s}, {duration_ms}ms, request_id={request_id}{err}"
 
 
+def _to_int(x: str) -> Optional[int]:
+    try:
+        x = x.strip()
+        if not x:
+            return None
+        return int(x)
+    except Exception:
+        return None
+
+
+def _parse_dest_from_env(prefix: str) -> Optional[Destination]:
+    """
+    Ожидаем:
+      <prefix>_CHAT_ID
+      <prefix>_THREAD_ID (опционально)
+    thread_id=0 считаем невалидным и превращаем в None.
+    """
+    chat_id = _to_int(os.getenv(f"{prefix}_CHAT_ID", "").strip())
+    if chat_id is None:
+        return None
+    thread_id = _to_int(os.getenv(f"{prefix}_THREAD_ID", "").strip())
+    if thread_id == 0:
+        thread_id = None
+    return Destination(chat_id=chat_id, thread_id=thread_id)
+
+
+def _parse_kv_args(text: str) -> dict[str, str]:
+    """
+    Простейший парсер аргументов вида:
+      /routes_test name="VIP test" service_id=101 customer_id=5001
+    Поддерживаем кавычки только для значения name="...".
+    """
+    parts = text.split()
+    out: dict[str, str] = {}
+    for p in parts[1:]:
+        if "=" not in p:
+            continue
+        k, v = p.split("=", 1)
+        k = k.strip().lower()
+        v = v.strip()
+        out[k] = v
+    # Если name="... с пробелами", split() разорвёт. Поэтому делаем отдельный хак:
+    # ищем name=" и последний "
+    if 'name="' in text:
+        start = text.find('name="')
+        if start != -1:
+            start += len('name="')
+            end = text.find('"', start)
+            if end != -1:
+                out["name"] = text[start:end]
+    return out
+
+
+def _build_fake_item(
+    *,
+    name: str,
+    service_id_field: str,
+    customer_id_field: str,
+    service_id: Optional[int],
+    customer_id: Optional[int],
+) -> dict:
+    """
+    Создаём "виртуальную заявку", чтобы прогнать routing без реального API.
+    """
+    it = {"Id": 999999, "Name": name}
+    if service_id is not None:
+        it[service_id_field] = service_id
+    if customer_id is not None:
+        it[customer_id_field] = customer_id
+    return it
+
+
 async def on_error(event: ErrorEvent) -> None:
     logger = logging.getLogger("bot.errors")
     logger.exception("Unhandled exception in update handling: %s", event.exception)
 
 
 async def cmd_start(message: Message) -> None:
-    await message.answer("Привет! Команды: /ping /status /needs_web /sd_open")
+    await message.answer("Привет! Команды: /ping /status /needs_web /sd_open /routes_test /routes_debug")
 
 
 async def cmd_ping(message: Message) -> None:
@@ -69,10 +144,7 @@ async def cmd_status(
     env = _get_env("ENVIRONMENT", "unknown")
     git_sha = _get_env("GIT_SHA", "unknown")
     web_base_url = _get_env("WEB_BASE_URL", "http://web:8000")
-    alert_chat_id = _get_env("ALERT_CHAT_ID", "")
 
-    # Шаг 24: перед выводом статуса активно проверяем Redis (если store умеет ping),
-    # чтобы backend отображал реальность "прямо сейчас", а не последнее состояние.
     if state_store is not None:
         ping_fn = getattr(state_store, "ping", None)
         if callable(ping_fn):
@@ -89,7 +161,6 @@ async def cmd_status(
         f"ENVIRONMENT: {env}",
         f"GIT_SHA: {git_sha}",
         f"WEB_BASE_URL: {web_base_url}",
-        f"ALERT_CHAT_ID: {alert_chat_id or '—'}",
         "",
         "STATE STORE:",
         f"- enabled: {'yes' if state_store is not None else 'no'}",
@@ -124,7 +195,7 @@ async def cmd_status(
 
 
 async def cmd_needs_web(message: Message) -> None:
-    await message.answer("web готов ✅ (дальше будет реальная бизнес-логика)")
+    await message.answer("web готов ✅")
 
 
 async def cmd_sd_open(message: Message, sd_web_client: SdWebClient) -> None:
@@ -142,6 +213,144 @@ async def cmd_sd_open(message: Message, sd_web_client: SdWebClient) -> None:
     for t in res.items[:20]:
         lines.append(f"- #{t.get('Id')}: {t.get('Name')}")
     await message.answer("\n".join(lines))
+
+
+async def cmd_routes_test(message: Message) -> None:
+    """
+    /routes_test name="VIP test" service_id=101 customer_id=5001
+
+    Команда не отправляет сообщения в чаты. Она показывает, КУДА бы ушло уведомление.
+    """
+    args = _parse_kv_args(message.text or "")
+
+    name = args.get("name", "test ticket")
+    service_id = _to_int(args.get("service_id", "").strip()) if "service_id" in args else None
+    customer_id = _to_int(args.get("customer_id", "").strip()) if "customer_id" in args else None
+
+    # Достаём конфиг так же, как в main()
+    service_id_field = os.getenv("ROUTES_SERVICE_ID_FIELD", "ServiceId").strip() or "ServiceId"
+    customer_id_field = os.getenv("ROUTES_CUSTOMER_ID_FIELD", "CustomerId").strip() or "CustomerId"
+
+    default_dest = _parse_dest_from_env("ROUTES_DEFAULT") or _parse_dest_from_env("ALERT")
+
+    rules_raw = os.getenv("ROUTES_RULES", "").strip()
+    rules = []
+    if rules_raw:
+        try:
+            rules = parse_rules(json.loads(rules_raw))
+        except Exception as e:
+            await message.answer(f"❌ ROUTES_RULES parse error: {e}")
+            return
+
+    fake = _build_fake_item(
+        name=name,
+        service_id_field=service_id_field,
+        customer_id_field=customer_id_field,
+        service_id=service_id,
+        customer_id=customer_id,
+    )
+    items = [fake]
+
+    dests = pick_destinations(
+        items=items,
+        rules=rules,
+        default_dest=default_dest,
+        service_id_field=service_id_field,
+        customer_id_field=customer_id_field,
+    )
+
+    lines = [
+        "🧪 routes_test",
+        f"- Name: {name}",
+        f"- {service_id_field}: {service_id if service_id is not None else '—'}",
+        f"- {customer_id_field}: {customer_id if customer_id is not None else '—'}",
+        f"- rules: {len(rules)}",
+        "",
+        "Destinations:",
+    ]
+
+    if not dests:
+        lines.append("— (ничего; default_dest тоже не задан)")
+    else:
+        for d in dests:
+            lines.append(f"- chat_id={d.chat_id}, thread_id={d.thread_id if d.thread_id is not None else '—'}")
+
+    await message.answer("\n".join(lines))
+
+
+async def cmd_routes_debug(message: Message) -> None:
+    """
+    /routes_debug name="VIP test" service_id=101 customer_id=5001
+
+    Показывает по каждому правилу: совпало/нет и почему.
+    """
+    args = _parse_kv_args(message.text or "")
+
+    name = args.get("name", "test ticket")
+    service_id = _to_int(args.get("service_id", "").strip()) if "service_id" in args else None
+    customer_id = _to_int(args.get("customer_id", "").strip()) if "customer_id" in args else None
+
+    service_id_field = os.getenv("ROUTES_SERVICE_ID_FIELD", "ServiceId").strip() or "ServiceId"
+    customer_id_field = os.getenv("ROUTES_CUSTOMER_ID_FIELD", "CustomerId").strip() or "CustomerId"
+
+    rules_raw = os.getenv("ROUTES_RULES", "").strip()
+    if not rules_raw:
+        await message.answer("❌ ROUTES_RULES is empty")
+        return
+
+    try:
+        rules = parse_rules(json.loads(rules_raw))
+    except Exception as e:
+        await message.answer(f"❌ ROUTES_RULES parse error: {e}")
+        return
+
+    fake = _build_fake_item(
+        name=name,
+        service_id_field=service_id_field,
+        customer_id_field=customer_id_field,
+        service_id=service_id,
+        customer_id=customer_id,
+    )
+    items = [fake]
+
+    debug = explain_matches(
+        items=items,
+        rules=rules,
+        service_id_field=service_id_field,
+        customer_id_field=customer_id_field,
+    )
+
+    lines = [
+        "🔎 routes_debug",
+        f"- Name: {name}",
+        f"- {service_id_field}: {service_id if service_id is not None else '—'}",
+        f"- {customer_id_field}: {customer_id if customer_id is not None else '—'}",
+        f"- rules: {len(rules)}",
+        "",
+    ]
+
+    for r in debug:
+        idx = r["index"]
+        dest = r["dest"]
+        matched = "✅ matched" if r["matched"] else "❌ not matched"
+        reason = r["reason"] or "—"
+        lines.append(f"{idx}) {matched} -> chat_id={dest['chat_id']}, thread_id={dest['thread_id'] if dest['thread_id'] is not None else '—'}")
+        lines.append(f"   reason: {reason}")
+        lines.append(f"   criteria: keywords={r['criteria']['keywords']} service_ids={r['criteria']['service_ids']} customer_ids={r['criteria']['customer_ids']}")
+
+    await message.answer("\n".join(lines))
+
+
+def _build_escalation_text(items: list[dict], mention: str) -> str:
+    now_s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
+    lines = [
+        f"🚨 Эскалация: заявки не взяты в работу вовремя — {now_s}",
+        f"{mention} заберите в работу, пожалуйста.",
+        "",
+    ]
+    for it in items:
+        lines.append(f"- #{it.get('Id')}: {it.get('Name')}")
+    return "\n".join(lines)
 
 
 async def main() -> None:
@@ -166,7 +375,7 @@ async def main() -> None:
         timeout_s=float(os.getenv("SD_WEB_TIMEOUT_S", "3")),
     )
 
-    # state store (шаг 24)
+    # --- state store (шаг 24) ---
     redis_url = os.getenv("REDIS_URL", "").strip()
     state_store: Optional[StateStore] = None
     if redis_url:
@@ -180,8 +389,6 @@ async def main() -> None:
         )
         fallback = MemoryStateStore(prefix="testci")
         state_store = ResilientStateStore(primary, fallback)
-
-        # Пинг на старте, чтобы backend был корректный сразу
         with contextlib.suppress(Exception):
             getattr(state_store, "ping", lambda: None)()
 
@@ -190,12 +397,63 @@ async def main() -> None:
 
     poll_interval_s = float(os.getenv("POLL_INTERVAL_S", "30"))
     poll_max_backoff_s = float(os.getenv("POLL_MAX_BACKOFF_S", "300"))
-
     min_notify_interval_s = float(os.getenv("MIN_NOTIFY_INTERVAL_S", "60"))
     max_items_in_message = int(os.getenv("MAX_ITEMS_IN_MESSAGE", "10"))
 
-    alert_chat_id_raw = os.getenv("ALERT_CHAT_ID", "").strip()
-    alert_chat_id = int(alert_chat_id_raw) if alert_chat_id_raw else None
+    # --- ROUTING (шаг 25) ---
+    default_dest = _parse_dest_from_env("ROUTES_DEFAULT")
+    if default_dest is None:
+        default_dest = _parse_dest_from_env("ALERT")
+
+    service_id_field = os.getenv("ROUTES_SERVICE_ID_FIELD", "ServiceId").strip() or "ServiceId"
+    customer_id_field = os.getenv("ROUTES_CUSTOMER_ID_FIELD", "CustomerId").strip() or "CustomerId"
+
+    rules_raw = os.getenv("ROUTES_RULES", "").strip()
+    rules = []
+    if rules_raw:
+        try:
+            parsed = json.loads(rules_raw)
+            rules = parse_rules(parsed)
+        except Exception as e:
+            logger.error("ROUTES_RULES parse error: %s", e)
+            rules = []
+
+    # --- ESCALATION (шаг 25) ---
+    esc_enabled = os.getenv("ESCALATION_ENABLED", "0").strip() in ("1", "true", "TRUE", "yes", "YES")
+    esc_after_s = int(os.getenv("ESCALATION_AFTER_S", "600"))
+    esc_dest = _parse_dest_from_env("ESCALATION_DEST")
+    esc_mention = os.getenv("ESCALATION_MENTION", "@duty_engineer").strip() or "@duty_engineer"
+
+    esc_service_id_field = os.getenv("ESCALATION_SERVICE_ID_FIELD", service_id_field).strip() or service_id_field
+    esc_customer_id_field = os.getenv("ESCALATION_CUSTOMER_ID_FIELD", customer_id_field).strip() or customer_id_field
+
+    esc_filter_raw = os.getenv("ESCALATION_FILTER", "").strip()
+    esc_filter = EscalationFilter()
+    if esc_filter_raw:
+        try:
+            jf = json.loads(esc_filter_raw)
+            if isinstance(jf, dict):
+                keywords = tuple(
+                    k.strip().lower()
+                    for k in jf.get("keywords", [])
+                    if isinstance(k, str) and k.strip()
+                )
+                service_ids = tuple(int(x) for x in jf.get("service_ids", []) if str(x).strip().isdigit())
+                customer_ids = tuple(int(x) for x in jf.get("customer_ids", []) if str(x).strip().isdigit())
+                esc_filter = EscalationFilter(keywords=keywords, service_ids=service_ids, customer_ids=customer_ids)
+        except Exception as e:
+            logger.error("ESCALATION_FILTER parse error: %s", e)
+
+    esc_manager: Optional[EscalationManager] = None
+    if esc_enabled:
+        esc_manager = EscalationManager(
+            store=state_store,
+            store_key="bot:escalation",
+            after_s=esc_after_s,
+            service_id_field=esc_service_id_field,
+            customer_id_field=esc_customer_id_field,
+            flt=esc_filter,
+        )
 
     bot = Bot(token=token)
     dp = Dispatcher()
@@ -214,21 +472,50 @@ async def main() -> None:
     dp.message.register(cmd_sd_open, Command("sd_open"))
     dp.message.register(cmd_needs_web, Command("needs_web"), WebReadyFilter("/needs_web"))
 
-    async def notify(text: str) -> None:
-        if alert_chat_id is None:
-            logging.getLogger("bot.polling").info(
-                "ALERT_CHAT_ID not set, skip notify: %s",
-                text.replace("\n", " | "),
-            )
+    # новые команды
+    dp.message.register(cmd_routes_test, Command("routes_test"))
+    dp.message.register(cmd_routes_debug, Command("routes_debug"))
+
+    async def _send(dest: Destination, text: str) -> None:
+        await bot.send_message(
+            chat_id=dest.chat_id,
+            message_thread_id=dest.thread_id,
+            text=text,
+        )
+
+    async def notify_main(items: list[dict], text: str) -> None:
+        dests = pick_destinations(
+            items=items,
+            rules=rules,
+            default_dest=default_dest,
+            service_id_field=service_id_field,
+            customer_id_field=customer_id_field,
+        )
+        if not dests:
+            logging.getLogger("bot.notify").info("No destinations configured for main notify, skip.")
             return
-        await bot.send_message(chat_id=alert_chat_id, text=text)
+        for d in dests:
+            await _send(d, text)
+
+    async def notify_escalation(items: list[dict], _marker: str) -> None:
+        if not esc_enabled or esc_dest is None:
+            return
+        text = _build_escalation_text(items, mention=esc_mention)
+        await _send(esc_dest, text)
+
+    def get_escalations(items: list[dict]) -> list[dict]:
+        if esc_manager is None:
+            return []
+        return esc_manager.process(items)
 
     polling_task = asyncio.create_task(
         polling_open_queue_loop(
             state=polling_state,
             stop_event=stop_event,
             sd_web_client=sd_web_client,
-            notify=notify,
+            notify_main=notify_main,
+            notify_escalation=notify_escalation if esc_enabled else None,
+            get_escalations=get_escalations if esc_enabled else None,
             base_interval_s=poll_interval_s,
             max_backoff_s=poll_max_backoff_s,
             min_notify_interval_s=min_notify_interval_s,
@@ -240,12 +527,10 @@ async def main() -> None:
     )
 
     logger.info(
-        "Bot started. WEB_BASE_URL=%s POLL_INTERVAL_S=%s MIN_NOTIFY_INTERVAL_S=%s MAX_ITEMS_IN_MESSAGE=%s ALERT_CHAT_ID=%s",
+        "Bot started. WEB_BASE_URL=%s POLL_INTERVAL_S=%s ROUTES_RULES=%s",
         web_base_url,
         poll_interval_s,
-        min_notify_interval_s,
-        max_items_in_message,
-        alert_chat_id_raw or "—",
+        len(rules),
     )
 
     try:
