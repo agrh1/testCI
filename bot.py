@@ -80,7 +80,7 @@ def _parse_kv_args(text: str) -> dict[str, str]:
     """
     Простейший парсер аргументов вида:
       /routes_test name="VIP test" service_id=101 customer_id=5001
-    Поддерживаем кавычки только для значения name="...".
+    Поддерживаем кавычки только для name="...".
     """
     parts = text.split()
     out: dict[str, str] = {}
@@ -88,11 +88,9 @@ def _parse_kv_args(text: str) -> dict[str, str]:
         if "=" not in p:
             continue
         k, v = p.split("=", 1)
-        k = k.strip().lower()
-        v = v.strip()
-        out[k] = v
-    # Если name="... с пробелами", split() разорвёт. Поэтому делаем отдельный хак:
-    # ищем name=" и последний "
+        out[k.strip().lower()] = v.strip()
+
+    # name="... с пробелами"
     if 'name="' in text:
         start = text.find('name="')
         if start != -1:
@@ -128,7 +126,7 @@ async def on_error(event: ErrorEvent) -> None:
 
 
 async def cmd_start(message: Message) -> None:
-    await message.answer("Привет! Команды: /ping /status /needs_web /sd_open /routes_test /routes_debug")
+    await message.answer("Команды: /ping /status /needs_web /sd_open /routes_test /routes_debug /routes_send_test")
 
 
 async def cmd_ping(message: Message) -> None:
@@ -215,32 +213,37 @@ async def cmd_sd_open(message: Message, sd_web_client: SdWebClient) -> None:
     await message.answer("\n".join(lines))
 
 
-async def cmd_routes_test(message: Message) -> None:
+def _load_routing_from_env() -> tuple[list, Optional[Destination], str, str, Optional[str]]:
     """
-    /routes_test name="VIP test" service_id=101 customer_id=5001
-
-    Команда не отправляет сообщения в чаты. Она показывает, КУДА бы ушло уведомление.
+    Возвращает:
+      rules, default_dest, service_id_field, customer_id_field, error
     """
-    args = _parse_kv_args(message.text or "")
-
-    name = args.get("name", "test ticket")
-    service_id = _to_int(args.get("service_id", "").strip()) if "service_id" in args else None
-    customer_id = _to_int(args.get("customer_id", "").strip()) if "customer_id" in args else None
-
-    # Достаём конфиг так же, как в main()
     service_id_field = os.getenv("ROUTES_SERVICE_ID_FIELD", "ServiceId").strip() or "ServiceId"
     customer_id_field = os.getenv("ROUTES_CUSTOMER_ID_FIELD", "CustomerId").strip() or "CustomerId"
-
     default_dest = _parse_dest_from_env("ROUTES_DEFAULT") or _parse_dest_from_env("ALERT")
 
     rules_raw = os.getenv("ROUTES_RULES", "").strip()
-    rules = []
-    if rules_raw:
-        try:
-            rules = parse_rules(json.loads(rules_raw))
-        except Exception as e:
-            await message.answer(f"❌ ROUTES_RULES parse error: {e}")
-            return
+    if not rules_raw:
+        return [], default_dest, service_id_field, customer_id_field, "ROUTES_RULES is empty"
+
+    try:
+        rules = parse_rules(json.loads(rules_raw))
+        return rules, default_dest, service_id_field, customer_id_field, None
+    except Exception as e:
+        return [], default_dest, service_id_field, customer_id_field, f"ROUTES_RULES parse error: {e}"
+
+
+async def cmd_routes_test(message: Message) -> None:
+    args = _parse_kv_args(message.text or "")
+
+    name = args.get("name", "test ticket")
+    service_id = _to_int(args.get("service_id", "")) if "service_id" in args else None
+    customer_id = _to_int(args.get("customer_id", "")) if "customer_id" in args else None
+
+    rules, default_dest, service_id_field, customer_id_field, err = _load_routing_from_env()
+    if err:
+        await message.answer(f"❌ {err}")
+        return
 
     fake = _build_fake_item(
         name=name,
@@ -268,7 +271,6 @@ async def cmd_routes_test(message: Message) -> None:
         "",
         "Destinations:",
     ]
-
     if not dests:
         lines.append("— (ничего; default_dest тоже не задан)")
     else:
@@ -279,29 +281,15 @@ async def cmd_routes_test(message: Message) -> None:
 
 
 async def cmd_routes_debug(message: Message) -> None:
-    """
-    /routes_debug name="VIP test" service_id=101 customer_id=5001
-
-    Показывает по каждому правилу: совпало/нет и почему.
-    """
     args = _parse_kv_args(message.text or "")
 
     name = args.get("name", "test ticket")
-    service_id = _to_int(args.get("service_id", "").strip()) if "service_id" in args else None
-    customer_id = _to_int(args.get("customer_id", "").strip()) if "customer_id" in args else None
+    service_id = _to_int(args.get("service_id", "")) if "service_id" in args else None
+    customer_id = _to_int(args.get("customer_id", "")) if "customer_id" in args else None
 
-    service_id_field = os.getenv("ROUTES_SERVICE_ID_FIELD", "ServiceId").strip() or "ServiceId"
-    customer_id_field = os.getenv("ROUTES_CUSTOMER_ID_FIELD", "CustomerId").strip() or "CustomerId"
-
-    rules_raw = os.getenv("ROUTES_RULES", "").strip()
-    if not rules_raw:
-        await message.answer("❌ ROUTES_RULES is empty")
-        return
-
-    try:
-        rules = parse_rules(json.loads(rules_raw))
-    except Exception as e:
-        await message.answer(f"❌ ROUTES_RULES parse error: {e}")
+    rules, _default_dest, service_id_field, customer_id_field, err = _load_routing_from_env()
+    if err:
+        await message.answer(f"❌ {err}")
         return
 
     fake = _build_fake_item(
@@ -334,9 +322,88 @@ async def cmd_routes_debug(message: Message) -> None:
         dest = r["dest"]
         matched = "✅ matched" if r["matched"] else "❌ not matched"
         reason = r["reason"] or "—"
-        lines.append(f"{idx}) {matched} -> chat_id={dest['chat_id']}, thread_id={dest['thread_id'] if dest['thread_id'] is not None else '—'}")
+        lines.append(
+            f"{idx}) {matched} -> chat_id={dest['chat_id']}, thread_id={dest['thread_id'] if dest['thread_id'] is not None else '—'}"
+        )
         lines.append(f"   reason: {reason}")
-        lines.append(f"   criteria: keywords={r['criteria']['keywords']} service_ids={r['criteria']['service_ids']} customer_ids={r['criteria']['customer_ids']}")
+        lines.append(
+            f"   criteria: keywords={r['criteria']['keywords']} service_ids={r['criteria']['service_ids']} customer_ids={r['criteria']['customer_ids']}"
+        )
+
+    await message.answer("\n".join(lines))
+
+
+async def cmd_routes_send_test(message: Message, bot: Bot) -> None:
+    """
+    /routes_send_test name="VIP авария" service_id=101 customer_id=5001
+
+    Реально отправляет проверочное сообщение в каждый рассчитанный destination.
+    """
+    args = _parse_kv_args(message.text or "")
+
+    name = args.get("name", "test ticket")
+    service_id = _to_int(args.get("service_id", "")) if "service_id" in args else None
+    customer_id = _to_int(args.get("customer_id", "")) if "customer_id" in args else None
+
+    rules, default_dest, service_id_field, customer_id_field, err = _load_routing_from_env()
+    if err:
+        await message.answer(f"❌ {err}")
+        return
+
+    fake = _build_fake_item(
+        name=name,
+        service_id_field=service_id_field,
+        customer_id_field=customer_id_field,
+        service_id=service_id,
+        customer_id=customer_id,
+    )
+    items = [fake]
+
+    dests = pick_destinations(
+        items=items,
+        rules=rules,
+        default_dest=default_dest,
+        service_id_field=service_id_field,
+        customer_id_field=customer_id_field,
+    )
+
+    if not dests:
+        await message.answer("❌ Destinations пустой (нет default_dest и не сработали правила)")
+        return
+
+    ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
+    text = (
+        "🧪 TEST MESSAGE (routes)\n"
+        f"Time: {ts}\n"
+        f"Name: {name}\n"
+        f"{service_id_field}: {service_id if service_id is not None else '—'}\n"
+        f"{customer_id_field}: {customer_id if customer_id is not None else '—'}\n"
+        "Если вы это видите — доставка в этот destination работает ✅"
+    )
+
+    sent = 0
+    failed: list[str] = []
+
+    for d in dests:
+        try:
+            await bot.send_message(
+                chat_id=d.chat_id,
+                message_thread_id=d.thread_id,
+                text=text,
+            )
+            sent += 1
+        except Exception as e:
+            failed.append(f"chat_id={d.chat_id}, thread_id={d.thread_id if d.thread_id is not None else '—'} -> {e}")
+
+    lines = [
+        "📨 routes_send_test result",
+        f"- destinations: {len(dests)}",
+        f"- sent: {sent}",
+    ]
+    if failed:
+        lines.append(f"- failed: {len(failed)}")
+        lines.append("")
+        lines.extend(failed)
 
     await message.answer("\n".join(lines))
 
@@ -401,10 +468,7 @@ async def main() -> None:
     max_items_in_message = int(os.getenv("MAX_ITEMS_IN_MESSAGE", "10"))
 
     # --- ROUTING (шаг 25) ---
-    default_dest = _parse_dest_from_env("ROUTES_DEFAULT")
-    if default_dest is None:
-        default_dest = _parse_dest_from_env("ALERT")
-
+    default_dest = _parse_dest_from_env("ROUTES_DEFAULT") or _parse_dest_from_env("ALERT")
     service_id_field = os.getenv("ROUTES_SERVICE_ID_FIELD", "ServiceId").strip() or "ServiceId"
     customer_id_field = os.getenv("ROUTES_CUSTOMER_ID_FIELD", "CustomerId").strip() or "CustomerId"
 
@@ -412,8 +476,7 @@ async def main() -> None:
     rules = []
     if rules_raw:
         try:
-            parsed = json.loads(rules_raw)
-            rules = parse_rules(parsed)
+            rules = parse_rules(json.loads(rules_raw))
         except Exception as e:
             logger.error("ROUTES_RULES parse error: %s", e)
             rules = []
@@ -472,16 +535,9 @@ async def main() -> None:
     dp.message.register(cmd_sd_open, Command("sd_open"))
     dp.message.register(cmd_needs_web, Command("needs_web"), WebReadyFilter("/needs_web"))
 
-    # новые команды
     dp.message.register(cmd_routes_test, Command("routes_test"))
     dp.message.register(cmd_routes_debug, Command("routes_debug"))
-
-    async def _send(dest: Destination, text: str) -> None:
-        await bot.send_message(
-            chat_id=dest.chat_id,
-            message_thread_id=dest.thread_id,
-            text=text,
-        )
+    dp.message.register(cmd_routes_send_test, Command("routes_send_test"))
 
     async def notify_main(items: list[dict], text: str) -> None:
         dests = pick_destinations(
@@ -495,13 +551,13 @@ async def main() -> None:
             logging.getLogger("bot.notify").info("No destinations configured for main notify, skip.")
             return
         for d in dests:
-            await _send(d, text)
+            await bot.send_message(chat_id=d.chat_id, message_thread_id=d.thread_id, text=text)
 
     async def notify_escalation(items: list[dict], _marker: str) -> None:
         if not esc_enabled or esc_dest is None:
             return
         text = _build_escalation_text(items, mention=esc_mention)
-        await _send(esc_dest, text)
+        await bot.send_message(chat_id=esc_dest.chat_id, message_thread_id=esc_dest.thread_id, text=text)
 
     def get_escalations(items: list[dict]) -> list[dict]:
         if esc_manager is None:
@@ -526,12 +582,7 @@ async def main() -> None:
         name="polling_open_queue",
     )
 
-    logger.info(
-        "Bot started. WEB_BASE_URL=%s POLL_INTERVAL_S=%s ROUTES_RULES=%s",
-        web_base_url,
-        poll_interval_s,
-        len(rules),
-    )
+    logger.info("Bot started. WEB_BASE_URL=%s POLL_INTERVAL_S=%s", web_base_url, poll_interval_s)
 
     try:
         await dp.start_polling(bot)
