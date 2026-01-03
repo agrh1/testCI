@@ -680,13 +680,15 @@ async def main() -> None:
     finally:
         stop_event.set()
         polling_task.cancel()
-        # CancelledError наследуется от BaseException, поэтому Exception его не ловит
-        with contextlib.suppress(asyncio.CancelledError):
+        try:
             await polling_task
+        except asyncio.CancelledError:
+            # Нормально: мы сами отменили фоновую задачу
+            pass
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         pass
