@@ -253,3 +253,10 @@ async def main() -> None:
         polling_task.cancel()
         with contextlib.suppress(Exception):
             await polling_task
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
