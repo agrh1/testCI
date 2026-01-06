@@ -561,7 +561,7 @@ async def main() -> None:
     web_client = WebClient(base_url=web_base_url)
 
     web_guard = WebGuard(web_client)
-    sd_web_client = SdWebClient(web_client)
+    sd_web_client = SdWebClient(web_base_url)
 
     # state store
     redis_url = os.getenv("REDIS_URL", "").strip()
