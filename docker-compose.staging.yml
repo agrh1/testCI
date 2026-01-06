@@ -35,6 +35,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read(); print('ok')\""]
@@ -61,12 +63,30 @@ services:
         condition: service_healthy
       web-staging:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
         
     restart: unless-stopped
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-        
+  
+  postgres:
+    image: postgres:16-alpine
+    container_name: cd-demo-postgres-staging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-testci}
+      POSTGRES_USER: ${POSTGRES_USER:-testci}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-testci}
+    volumes:
+      - pg_staging_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
   watchtower:
     image: containrrr/watchtower:1.7.1
     container_name: cd-demo-watchtower-staging
@@ -88,3 +108,4 @@ services:
       WATCHTOWER_LABEL_ENABLE: "true"   # обновлять только помеченные контейнеры
 volumes:
   redis_staging_data:
+  pg_staging_data:

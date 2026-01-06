@@ -10,6 +10,8 @@ from typing import Any
 import requests
 from flask import Flask, g, jsonify, request
 
+from web.db import create_db_engine, db_enabled, init_db, read_config
+
 app = Flask(__name__)
 
 ALLOWED_ENVIRONMENTS = {"staging", "prod", "local"}
@@ -94,6 +96,22 @@ def setup_logging() -> ContextAdapter:
 
 log = setup_logging()
 
+# -----------------------------
+# DB init
+# -----------------------------
+_db_engine = None
+if db_enabled():
+    try:
+        _db_engine = create_db_engine()
+        init_db(_db_engine)
+        log.info("db init ok (DATABASE_URL задан)")
+    except Exception as e:
+        # Важно: web НЕ должен падать из-за БД на первом этапе.
+        # Просто логируем и продолжаем без /config из БД.
+        _db_engine = None
+        log.error("db init failed: %s", e)
+else:
+    log.info("db disabled: DATABASE_URL not set")
 
 def _get_request_id() -> str:
     rid = request.headers.get("X-Request-ID")
@@ -378,6 +396,39 @@ def sd_open() -> tuple[Any, int]:
                 "request_id": getattr(g, "request_id", "unknown"),
             }
         ), 502
+
+@app.get("/config")
+def get_config() -> Any:
+    """
+    Возвращает конфиг routing/эскалации для бота.
+
+    Источник:
+    - если подключена БД (DATABASE_URL задан и init прошёл) — читаем из Postgres
+    - иначе (fallback) — отдаём "пустой" конфиг (чтобы не падать)
+    """
+    # (опционально) простая защита эндпоинта токеном
+    token = os.getenv("CONFIG_TOKEN", "").strip()
+    if token:
+        got = request.headers.get("X-Config-Token", "").strip()
+        if got != token:
+            return jsonify({"error": "unauthorized"}), 401
+
+    if _db_engine is None:
+        return jsonify(
+            {
+                "version": 0,
+                "routing": {"rules": [], "default_dest": {"chat_id": None, "thread_id": None}},
+                "escalation": {"enabled": False},
+                "source": "fallback_no_db",
+            }
+        )
+
+    data, err = read_config(_db_engine)
+    if err:
+        return jsonify({"error": "config_read_failed", "detail": err}), 500
+
+    data["source"] = "postgres"
+    return jsonify(data)
 
 
 if __name__ == "__main__":
