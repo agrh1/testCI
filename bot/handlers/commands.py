@@ -62,6 +62,8 @@ def register_handlers(dp: Dispatcher) -> None:
     admin_router.message.register(cmd_user_list, Command("user_list"))
     admin_router.message.register(cmd_help_admin, Command("help_admin"))
     admin_router.message.register(cmd_user_history, Command("user_history"))
+    admin_router.message.register(cmd_user_audit, Command("user_audit"))
+    admin_router.message.register(cmd_share_contact, Command("share_contact"))
 
     dp.include_router(user_router)
     dp.include_router(admin_router)
@@ -221,6 +223,8 @@ async def cmd_help_admin(message: Message) -> None:
         "- /user_list [admins|users] [history]\n"
         "- /user_list top10\n"
         "- /user_history <id> [limit]\n"
+        "- /user_audit <id> [limit]\n"
+        "- /share_contact <id> <phone>\n"
         "- /help_admin"
     )
 
@@ -554,15 +558,15 @@ async def cmd_share_phone(message: Message, user_store: UserStore) -> None:
         if role is None:
             await message.answer("⛔ Вы не зарегистрированы. Обратитесь к администратору.")
             return
-        profile = _profile_from_message(message)
-        profile = TgProfile(
-            telegram_id=profile.telegram_id,
-            username=profile.username,
-            full_name=profile.full_name,
-            phone=phone_arg,
+        if role != "admin":
+            await message.answer(
+                "⛔ Ручной ввод телефона доступен только администратору.\n"
+                "Используйте кнопку отправки контакта."
+            )
+            return
+        await message.answer(
+            "Используйте команду /share_contact <id> <phone> для ручного ввода телефона."
         )
-        await user_store.upsert_profile(profile, role=role)
-        await message.answer("✅ Телефон сохранён.", reply_markup=ReplyKeyboardRemove())
         return
 
     if message.chat.type != "private":
@@ -606,7 +610,48 @@ async def cmd_save_contact(message: Message, user_store: UserStore) -> None:
         return
     profile = _profile_from_message(message)
     await user_store.upsert_profile(profile, role=role)
+    await user_store.log_audit(
+        telegram_id=profile.telegram_id,
+        action="U:share_phone_contact",
+        actor_id=profile.telegram_id,
+    )
     await message.answer("✅ Телефон сохранён.", reply_markup=ReplyKeyboardRemove())
+
+
+async def cmd_share_contact(message: Message, user_store: UserStore) -> None:
+    """
+    /share_contact <telegram_id> <phone>
+
+    Ручной ввод телефона админом для указанного пользователя.
+    """
+    parts = (message.text or "").split()
+    if len(parts) < 3:
+        await message.answer("Формат: /share_contact <telegram_id> <phone>")
+        return
+    try:
+        target_id = int(parts[1])
+    except Exception:
+        await message.answer("Некорректный telegram_id.")
+        return
+    phone = parts[2].strip()
+    if not phone:
+        await message.answer("Телефон не указан.")
+        return
+
+    role = await user_store.get_role(target_id) or "user"
+    profile = TgProfile(
+        telegram_id=target_id,
+        username="",
+        full_name="",
+        phone=phone,
+    )
+    await user_store.upsert_profile(profile, role=role)
+    await user_store.log_audit(
+        telegram_id=target_id,
+        action="U:share_contact_admin",
+        actor_id=message.from_user.id if message.from_user else None,
+    )
+    await message.answer(f"✅ Телефон сохранён для пользователя {target_id}.")
 
 
 async def cmd_user_add(message: Message, user_store: UserStore) -> None:
@@ -626,6 +671,11 @@ async def cmd_user_add(message: Message, user_store: UserStore) -> None:
         role="user",
         added_by=message.from_user.id if message.from_user else None,
     )
+    await user_store.log_audit(
+        telegram_id=target_id,
+        action="U:user_add",
+        actor_id=message.from_user.id if message.from_user else None,
+    )
     await _maybe_update_profile_from_reply(message, user_store)
     await message.answer(f"✅ Пользователь добавлен: {target_id}")
 
@@ -642,6 +692,11 @@ async def cmd_user_remove(message: Message, user_store: UserStore) -> None:
         return
 
     await user_store.delete_user(target_id)
+    await user_store.log_audit(
+        telegram_id=target_id,
+        action="D:user_remove",
+        actor_id=message.from_user.id if message.from_user else None,
+    )
     await message.answer(f"✅ Пользователь удалён: {target_id}")
 
 
@@ -660,6 +715,11 @@ async def cmd_admin_add(message: Message, user_store: UserStore) -> None:
         telegram_id=target_id,
         role="admin",
         added_by=message.from_user.id if message.from_user else None,
+    )
+    await user_store.log_audit(
+        telegram_id=target_id,
+        action="U:admin_add",
+        actor_id=message.from_user.id if message.from_user else None,
     )
     await _maybe_update_profile_from_reply(message, user_store)
     await message.answer(f"✅ Админ добавлен: {target_id}")
@@ -768,6 +828,46 @@ async def cmd_user_history(message: Message, user_store: UserStore) -> None:
         ts = it.get("created_at")
         ts_s = ts.strftime("%Y-%m-%d %H:%M:%S") if ts else "—"
         lines.append(f"- {ts_s} {cmd}")
+
+    await message.answer("\n".join(lines), reply_markup=ReplyKeyboardRemove())
+
+
+async def cmd_user_audit(message: Message, user_store: UserStore) -> None:
+    """
+    /user_audit <telegram_id> [limit]
+
+    Показывает audit-историю по пользователю.
+    """
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.answer("Формат: /user_audit <telegram_id> [limit]")
+        return
+    try:
+        target_id = int(parts[1])
+    except Exception:
+        await message.answer("Некорректный telegram_id.")
+        return
+
+    limit = 20
+    if len(parts) >= 3:
+        try:
+            limit = max(1, min(int(parts[2]), 200))
+        except Exception:
+            limit = 20
+
+    items = await user_store.list_audit(target_id, limit=limit)
+    if not items:
+        await message.answer("Audit-история пустая.")
+        return
+
+    lines = [f"Audit для {target_id} (до {limit}):"]
+    for it in items:
+        action = it.get("action") or "—"
+        actor = it.get("actor_id")
+        actor_s = str(actor) if actor is not None else "—"
+        ts = it.get("created_at")
+        ts_s = ts.strftime("%Y-%m-%d %H:%M:%S") if ts else "—"
+        lines.append(f"- {ts_s} {action} (actor={actor_s})")
 
     await message.answer("\n".join(lines), reply_markup=ReplyKeyboardRemove())
 
@@ -905,7 +1005,12 @@ async def _maybe_update_profile_from_reply(message: Message, user_store: UserSto
     if not reply_msg.from_user:
         return
     profile = _profile_from_message(reply_msg)
-    await user_store.update_profile(profile)
+    await user_store.update_profile_if_exists(profile)
+    await user_store.log_audit(
+        telegram_id=profile.telegram_id,
+        action="U:update_profile_reply",
+        actor_id=message.from_user.id if message.from_user else None,
+    )
 
 
 def _profile_from_message(message: Message) -> TgProfile:

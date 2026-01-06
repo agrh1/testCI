@@ -57,7 +57,7 @@ class UserStore:
         """
         await asyncio.to_thread(self._upsert_role_sync, telegram_id, role, added_by)
 
-    async def update_profile(self, profile: TgProfile) -> None:
+    async def update_profile_if_exists(self, profile: TgProfile) -> None:
         """
         Обновляет профиль пользователя, если запись уже существует.
         """
@@ -74,6 +74,18 @@ class UserStore:
         Удаляет пользователя из таблицы.
         """
         await asyncio.to_thread(self._delete_user_sync, telegram_id)
+
+    async def log_audit(self, *, telegram_id: int, action: str, actor_id: Optional[int]) -> None:
+        """
+        Логирует административные действия (U/D).
+        """
+        await asyncio.to_thread(self._log_audit_sync, telegram_id, action, actor_id)
+
+    async def list_audit(self, telegram_id: int, limit: int = 20) -> list[dict[str, object]]:
+        """
+        Возвращает audit-историю пользователя.
+        """
+        return await asyncio.to_thread(self._list_audit_sync, telegram_id, limit)
 
     async def list_users(self, limit: int = 50) -> list[dict[str, object]]:
         """
@@ -141,6 +153,18 @@ class UserStore:
                 """
             )
 
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tg_user_audit (
+                    id BIGSERIAL PRIMARY KEY,
+                    telegram_id BIGINT NOT NULL,
+                    action TEXT NOT NULL,
+                    actor_id BIGINT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+
     def _init_from_env_sync(self, admins: tuple[int, ...], users: tuple[int, ...]) -> None:
         with self._connect() as conn, conn.cursor() as cur:
             for tid in admins:
@@ -189,9 +213,9 @@ class UserStore:
             cur.execute(
                 """
                 UPDATE tg_users
-                SET username = NULLIF(%s, ''),
-                    full_name = NULLIF(%s, ''),
-                    phone = NULLIF(%s, ''),
+                SET username = COALESCE(NULLIF(%s, ''), username),
+                    full_name = COALESCE(NULLIF(%s, ''), full_name),
+                    phone = COALESCE(NULLIF(%s, ''), phone),
                     updated_at = now()
                 WHERE telegram_id = %s
                 """,
@@ -206,9 +230,9 @@ class UserStore:
                 VALUES (%s, %s, NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''))
                 ON CONFLICT (telegram_id)
                 DO UPDATE SET
-                    username = NULLIF(EXCLUDED.username, ''),
-                    full_name = NULLIF(EXCLUDED.full_name, ''),
-                    phone = NULLIF(EXCLUDED.phone, ''),
+                    username = COALESCE(NULLIF(EXCLUDED.username, ''), tg_users.username),
+                    full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), tg_users.full_name),
+                    phone = COALESCE(NULLIF(EXCLUDED.phone, ''), tg_users.phone),
                     updated_at = now()
                 """,
                 (profile.telegram_id, role, profile.username, profile.full_name, profile.phone),
@@ -260,6 +284,38 @@ class UserStore:
                 """,
                 (command, telegram_id),
             )
+
+    def _log_audit_sync(self, telegram_id: int, action: str, actor_id: Optional[int]) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO tg_user_audit (telegram_id, action, actor_id)
+                VALUES (%s, %s, %s)
+                """,
+                (telegram_id, action, actor_id),
+            )
+
+    def _list_audit_sync(self, telegram_id: int, limit: int) -> list[dict[str, object]]:
+        with self._connect() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                SELECT action, actor_id, created_at
+                FROM tg_user_audit
+                WHERE telegram_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (telegram_id, limit),
+            )
+            rows = cur.fetchall()
+            return [
+                {
+                    "action": str(r["action"]),
+                    "actor_id": r["actor_id"],
+                    "created_at": r["created_at"],
+                }
+                for r in rows
+            ]
 
     def _list_history_sync(self, telegram_id: int, limit: int) -> list[dict[str, object]]:
         with self._connect() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:

@@ -49,10 +49,6 @@ class AccessControlMiddleware(BaseMiddleware):
             await _notify_unregistered(event)
             return
 
-        # Обновляем профиль для зарегистрированных, чтобы данные были актуальны.
-        profile = _profile_from_message(event)
-        await user_store.upsert_profile(profile, role=role)
-
         # Логируем команду, если это именно команда.
         command = _extract_command(event)
         if command:
