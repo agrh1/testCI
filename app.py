@@ -10,7 +10,8 @@ from typing import Any
 import requests
 from flask import Flask, g, jsonify, request
 
-from web.db import create_db_engine, db_enabled, init_db, read_config
+from web.config_validation import ConfigValidationError, validate_config
+from web.db import create_db_engine, db_enabled, init_db, read_config, write_config
 
 app = Flask(__name__)
 
@@ -429,6 +430,37 @@ def get_config() -> Any:
 
     data["source"] = "postgres"
     return jsonify(data)
+
+@app.put("/config")
+def put_config():
+    """
+    Обновление конфига (admin only).
+    """
+    admin_token = os.getenv("CONFIG_ADMIN_TOKEN", "").strip()
+    if not admin_token:
+        return jsonify({"error": "admin token not configured"}), 403
+
+    got = request.headers.get("X-Admin-Token", "").strip()
+    if got != admin_token:
+        return jsonify({"error": "unauthorized"}), 401
+
+    if _db_engine is None:
+        return jsonify({"error": "db disabled"}), 500
+
+    try:
+        data = request.get_json(force=True)
+        validate_config(data)
+    except ConfigValidationError as e:
+        return jsonify({"error": "validation_failed", "detail": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": "bad_json", "detail": str(e)}), 400
+
+    try:
+        new_version = write_config(_db_engine, data)
+    except Exception as e:
+        return jsonify({"error": "db_write_failed", "detail": str(e)}), 500
+
+    return jsonify({"ok": True, "version": new_version})
 
 
 if __name__ == "__main__":
