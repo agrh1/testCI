@@ -29,6 +29,27 @@ from bot.utils.web_client import WebClient
 from bot.utils.web_guard import WebGuard
 
 
+def _build_state_store(settings: BotSettings) -> StateStore:
+    """
+    Создаёт state store с fallback на память.
+    """
+    if settings.redis_url:
+        primary = RedisStateStore(
+            settings.redis_url,
+            prefix="testci",
+            socket_timeout_s=settings.redis_socket_timeout_s,
+            socket_connect_timeout_s=settings.redis_connect_timeout_s,
+        )
+        fallback = MemoryStateStore(prefix="testci")
+        state_store = ResilientStateStore(primary, fallback)
+        with contextlib.suppress(Exception):
+            getattr(state_store, "ping", lambda: None)()
+        return state_store
+
+    # Даже без Redis используем MemoryStateStore, чтобы сохранять состояние в памяти.
+    return MemoryStateStore(prefix="testci")
+
+
 async def main() -> None:
     # Логирование настраиваем до создания клиентов, чтобы ловить все сообщения.
     settings = BotSettings.from_env()
@@ -138,23 +159,3 @@ if __name__ == "__main__":
         # Нормально: процесс завершился по сигналу или отмене.
         pass
 
-
-def _build_state_store(settings: BotSettings) -> StateStore:
-    """
-    Создаёт state store с fallback на память.
-    """
-    if settings.redis_url:
-        primary = RedisStateStore(
-            settings.redis_url,
-            prefix="testci",
-            socket_timeout_s=settings.redis_socket_timeout_s,
-            socket_connect_timeout_s=settings.redis_connect_timeout_s,
-        )
-        fallback = MemoryStateStore(prefix="testci")
-        state_store = ResilientStateStore(primary, fallback)
-        with contextlib.suppress(Exception):
-            getattr(state_store, "ping", lambda: None)()
-        return state_store
-
-    # Даже без Redis используем MemoryStateStore, чтобы сохранять состояние в памяти.
-    return MemoryStateStore(prefix="testci")
