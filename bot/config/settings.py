@@ -55,6 +55,18 @@ def parse_int_list(raw: str) -> list[int]:
     return out
 
 
+def normalize_database_url(url: str) -> str:
+    """
+    Нормализует DATABASE_URL для прямого подключения psycopg2.
+
+    Web использует SQLAlchemy-формат: postgresql+psycopg2://...
+    Для psycopg2 нужен postgresql://...
+    """
+    if url.startswith("postgresql+psycopg2://"):
+        return url.replace("postgresql+psycopg2://", "postgresql://", 1)
+    return url
+
+
 @dataclass(frozen=True)
 class BotSettings:
     """
@@ -103,6 +115,7 @@ class BotSettings:
         config_timeout_s = get_env_float("CONFIG_TIMEOUT_S", "2.5")
 
         database_url = get_env("DATABASE_URL", "").strip()
+        database_url = normalize_database_url(database_url)
 
         tg_admins = tuple(parse_int_list(get_env("TG_ADMINS", "")))
         tg_users = tuple(parse_int_list(get_env("TG_USERS", "")))

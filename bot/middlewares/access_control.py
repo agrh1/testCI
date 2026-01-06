@@ -10,7 +10,7 @@ Middleware контроля доступа для Telegram-бота.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message
@@ -52,6 +52,11 @@ class AccessControlMiddleware(BaseMiddleware):
         # Обновляем профиль для зарегистрированных, чтобы данные были актуальны.
         profile = _profile_from_message(event)
         await user_store.update_profile(profile)
+
+        # Логируем команду, если это именно команда.
+        command = _extract_command(event)
+        if command:
+            await user_store.log_command(user.id, command)
 
         if self._policy.required_role == "admin":
             if role != "admin":
@@ -100,3 +105,17 @@ def _profile_from_message(message: Message) -> TgProfile:
         full_name=full_name,
         phone=phone,
     )
+
+
+def _extract_command(message: Message) -> Optional[str]:
+    """
+    Извлекает команду из текста сообщения, если она есть.
+    """
+    text = (message.text or "").strip()
+    if not text.startswith("/"):
+        return None
+    cmd = text.split()[0]
+    # Убираем суффикс бота (/cmd@botname).
+    if "@" in cmd:
+        cmd = cmd.split("@", 1)[0]
+    return cmd.lower()

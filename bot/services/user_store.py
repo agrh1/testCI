@@ -75,6 +75,18 @@ class UserStore:
         """
         return await asyncio.to_thread(self._list_users_sync, limit)
 
+    async def log_command(self, telegram_id: int, command: str) -> None:
+        """
+        Сохраняет команду в истории и обновляет last_command.
+        """
+        await asyncio.to_thread(self._log_command_sync, telegram_id, command)
+
+    async def list_history(self, telegram_id: int, limit: int = 20) -> list[dict[str, object]]:
+        """
+        Возвращает историю команд пользователя (по убыванию времени).
+        """
+        return await asyncio.to_thread(self._list_history_sync, telegram_id, limit)
+
     def _connect(self):
         return psycopg2.connect(self._database_url)
 
@@ -88,9 +100,25 @@ class UserStore:
                     username TEXT,
                     full_name TEXT,
                     phone TEXT,
+                    last_command TEXT,
+                    last_command_at TIMESTAMPTZ,
                     added_by BIGINT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            # Добавляем колонки, если таблица уже существовала.
+            cur.execute("ALTER TABLE tg_users ADD COLUMN IF NOT EXISTS last_command TEXT")
+            cur.execute("ALTER TABLE tg_users ADD COLUMN IF NOT EXISTS last_command_at TIMESTAMPTZ")
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tg_command_history (
+                    id BIGSERIAL PRIMARY KEY,
+                    telegram_id BIGINT NOT NULL,
+                    command TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
                 """
             )
@@ -160,7 +188,7 @@ class UserStore:
         with self._connect() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(
                 """
-                SELECT telegram_id, role, username, full_name, phone
+                SELECT telegram_id, role, username, full_name, phone, last_command, last_command_at
                 FROM tg_users
                 ORDER BY role DESC, telegram_id ASC
                 LIMIT %s
@@ -175,6 +203,47 @@ class UserStore:
                     "username": str(r["username"] or ""),
                     "full_name": str(r["full_name"] or ""),
                     "phone": str(r["phone"] or ""),
+                    "last_command": str(r["last_command"] or ""),
+                    "last_command_at": r["last_command_at"],
+                }
+                for r in rows
+            ]
+
+    def _log_command_sync(self, telegram_id: int, command: str) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO tg_command_history (telegram_id, command)
+                VALUES (%s, %s)
+                """,
+                (telegram_id, command),
+            )
+            cur.execute(
+                """
+                UPDATE tg_users
+                SET last_command = %s, last_command_at = now(), updated_at = now()
+                WHERE telegram_id = %s
+                """,
+                (command, telegram_id),
+            )
+
+    def _list_history_sync(self, telegram_id: int, limit: int) -> list[dict[str, object]]:
+        with self._connect() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                SELECT command, created_at
+                FROM tg_command_history
+                WHERE telegram_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (telegram_id, limit),
+            )
+            rows = cur.fetchall()
+            return [
+                {
+                    "command": str(r["command"]),
+                    "created_at": r["created_at"],
                 }
                 for r in rows
             ]

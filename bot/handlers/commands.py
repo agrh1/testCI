@@ -59,6 +59,7 @@ def register_handlers(dp: Dispatcher) -> None:
     admin_router.message.register(cmd_admin_add, Command("admin_add"))
     admin_router.message.register(cmd_user_list, Command("user_list"))
     admin_router.message.register(cmd_help_admin, Command("help_admin"))
+    admin_router.message.register(cmd_user_history, Command("user_history"))
 
     dp.include_router(user_router)
     dp.include_router(admin_router)
@@ -207,7 +208,9 @@ async def cmd_help_admin(message: Message) -> None:
         "- /user_add <id>\n"
         "- /user_remove <id>\n"
         "- /admin_add <id>\n"
-        "- /user_list [admins|users]"
+        "- /user_list [admins|users] [history]\n"
+        "- /user_history <id> [limit]\n"
+        "- /help_admin"
     )
 
 
@@ -606,6 +609,7 @@ async def cmd_user_list(message: Message, user_store: UserStore) -> None:
     Показывает список пользователей и админов.
     """
     role_filter = _parse_role_filter(message)
+    show_history = _parse_history_flag(message)
     items = await user_store.list_users(limit=200)
     if not items:
         await message.answer("Список пользователей пуст.", reply_markup=ReplyKeyboardRemove())
@@ -626,7 +630,51 @@ async def cmd_user_list(message: Message, user_store: UserStore) -> None:
         username_part = f"@{username}" if username else "—"
         full_name = it.get("full_name") or "—"
         phone = it.get("phone") or "—"
-        lines.append(f"- {role}: {tid} ({username_part}) {full_name} / {phone}")
+        line = f"- {role}: {tid} ({username_part}) {full_name} / {phone}"
+        if show_history:
+            last_cmd = it.get("last_command") or "—"
+            last_at = it.get("last_command_at")
+            last_at_s = last_at.strftime("%Y-%m-%d %H:%M:%S") if last_at else "—"
+            line += f" | last: {last_cmd} @ {last_at_s}"
+        lines.append(line)
+
+    await message.answer("\n".join(lines), reply_markup=ReplyKeyboardRemove())
+
+
+async def cmd_user_history(message: Message, user_store: UserStore) -> None:
+    """
+    /user_history <telegram_id> [limit]
+
+    Показывает историю команд пользователя.
+    """
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.answer("Формат: /user_history <telegram_id> [limit]")
+        return
+    try:
+        target_id = int(parts[1])
+    except Exception:
+        await message.answer("Некорректный telegram_id.")
+        return
+
+    limit = 20
+    if len(parts) >= 3:
+        try:
+            limit = max(1, min(int(parts[2]), 200))
+        except Exception:
+            limit = 20
+
+    items = await user_store.list_history(target_id, limit=limit)
+    if not items:
+        await message.answer("История команд пустая.")
+        return
+
+    lines = [f"История команд для {target_id} (до {limit}):"]
+    for it in items:
+        cmd = it.get("command") or "—"
+        ts = it.get("created_at")
+        ts_s = ts.strftime("%Y-%m-%d %H:%M:%S") if ts else "—"
+        lines.append(f"- {ts_s} {cmd}")
 
     await message.answer("\n".join(lines), reply_markup=ReplyKeyboardRemove())
 
@@ -660,6 +708,14 @@ def _parse_role_filter(message: Message) -> Optional[str]:
     if arg in {"user", "users"}:
         return "user"
     return None
+
+
+def _parse_history_flag(message: Message) -> bool:
+    """
+    Проверяет наличие флага history в /user_list.
+    """
+    parts = (message.text or "").split()
+    return any(p.strip().lower() == "history" for p in parts[1:])
 
 
 async def _maybe_update_profile_from_reply(message: Message, user_store: UserStore) -> None:
