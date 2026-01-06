@@ -45,6 +45,14 @@ class PollingState:
     last_admin_alert_at: Optional[float] = None
     admin_alerts_skipped_rate_limit: int = 0
 
+    # 27D/27B: алерты по деградации и частым rollback
+    last_web_alert_at: Optional[float] = None
+    web_alerts_skipped_rate_limit: int = 0
+    last_redis_alert_at: Optional[float] = None
+    redis_alerts_skipped_rate_limit: int = 0
+    last_rollback_alert_at: Optional[float] = None
+    rollback_alerts_skipped_rate_limit: int = 0
+
 
 def _fmt_state_message(*, normalized_items: list[dict[str, object]], max_items_in_message: int) -> str:
     now_s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
@@ -88,6 +96,12 @@ def load_polling_state_from_store(state: PollingState, store: StateStore, key: s
     state.last_ticket_without_destination_at = data.get("last_ticket_without_destination_at")
     state.last_admin_alert_at = data.get("last_admin_alert_at")
     state.admin_alerts_skipped_rate_limit = int(data.get("admin_alerts_skipped_rate_limit", 0))
+    state.last_web_alert_at = data.get("last_web_alert_at")
+    state.web_alerts_skipped_rate_limit = int(data.get("web_alerts_skipped_rate_limit", 0))
+    state.last_redis_alert_at = data.get("last_redis_alert_at")
+    state.redis_alerts_skipped_rate_limit = int(data.get("redis_alerts_skipped_rate_limit", 0))
+    state.last_rollback_alert_at = data.get("last_rollback_alert_at")
+    state.rollback_alerts_skipped_rate_limit = int(data.get("rollback_alerts_skipped_rate_limit", 0))
 
 
 def save_polling_state_to_store(state: PollingState, store: StateStore, key: str) -> None:
@@ -103,6 +117,12 @@ def save_polling_state_to_store(state: PollingState, store: StateStore, key: str
         "last_ticket_without_destination_at": state.last_ticket_without_destination_at,
         "last_admin_alert_at": state.last_admin_alert_at,
         "admin_alerts_skipped_rate_limit": state.admin_alerts_skipped_rate_limit,
+        "last_web_alert_at": state.last_web_alert_at,
+        "web_alerts_skipped_rate_limit": state.web_alerts_skipped_rate_limit,
+        "last_redis_alert_at": state.last_redis_alert_at,
+        "redis_alerts_skipped_rate_limit": state.redis_alerts_skipped_rate_limit,
+        "last_rollback_alert_at": state.last_rollback_alert_at,
+        "rollback_alerts_skipped_rate_limit": state.rollback_alerts_skipped_rate_limit,
     }
     store.set_json(key, payload)
 

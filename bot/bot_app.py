@@ -20,6 +20,7 @@ from bot.config.settings import BotSettings
 from bot.handlers import commands, errors
 from bot.services.config_sync import ConfigSyncService
 from bot.services.notifications import NotificationService
+from bot.services.observability import ObservabilityService
 from bot.services.user_store import UserStore
 from bot.utils.config_client import ConfigClient
 from bot.utils.polling import PollingState, polling_open_queue_loop
@@ -107,9 +108,24 @@ async def main() -> None:
     dp.workflow_data["state_store"] = state_store
     dp.workflow_data["runtime_config"] = runtime_config
     dp.workflow_data["user_store"] = user_store
+    dp.workflow_data["config_admin_token"] = settings.config_admin_token
 
     dp.errors.register(errors.on_error)
     commands.register_handlers(dp)
+
+    observability = ObservabilityService(
+        bot=bot,
+        polling_state=polling_state,
+        runtime_config=runtime_config,
+        web_client=web_client,
+        state_store=state_store,
+        logger=logger,
+        config_admin_token=settings.config_admin_token,
+        admin_alert_min_interval_s=settings.admin_alert_min_interval_s,
+        web_alert_min_interval_s=settings.obs_web_alert_min_interval_s,
+        redis_alert_min_interval_s=settings.obs_redis_alert_min_interval_s,
+        rollback_alert_min_interval_s=settings.obs_rollback_alert_min_interval_s,
+    )
 
     notify_service = NotificationService(
         bot=bot,
@@ -117,6 +133,7 @@ async def main() -> None:
         polling_state=polling_state,
         config_sync=config_sync,
         logger=logger,
+        observability=observability,
     )
 
     polling_task = asyncio.create_task(
@@ -138,6 +155,21 @@ async def main() -> None:
         name="polling_open_queue",
     )
 
+    async def observability_loop() -> None:
+        """
+        Периодические проверки деградации и rollback.
+        """
+        while not stop_event.is_set():
+            await observability.check_web()
+            await observability.check_redis()
+            await observability.check_rollbacks(
+                window_s=settings.obs_rollback_window_s,
+                threshold=settings.obs_rollback_threshold,
+            )
+            await asyncio.sleep(settings.obs_check_interval_s)
+
+    observability_task = asyncio.create_task(observability_loop(), name="observability")
+
     # Пытаемся сразу подтянуть конфиг при старте (не обязательно, но удобно для диагностики).
     await config_sync.refresh(force=True)
 
@@ -154,10 +186,15 @@ async def main() -> None:
     finally:
         stop_event.set()
         polling_task.cancel()
+        observability_task.cancel()
         try:
             await polling_task
         except asyncio.CancelledError:
             # Нормально: мы сами отменили фоновую задачу.
+            pass
+        try:
+            await observability_task
+        except asyncio.CancelledError:
             pass
 
 

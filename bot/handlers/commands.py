@@ -29,6 +29,7 @@ from bot.utils.state_store import StateStore
 from bot.utils.web_client import WebClient
 from bot.utils.web_filters import WebReadyFilter
 
+_PENDING_SHARE_CONTACT: dict[int, dict[str, object]] = {}
 
 def register_handlers(dp: Dispatcher) -> None:
     """
@@ -64,6 +65,8 @@ def register_handlers(dp: Dispatcher) -> None:
     admin_router.message.register(cmd_user_history, Command("user_history"))
     admin_router.message.register(cmd_user_audit, Command("user_audit"))
     admin_router.message.register(cmd_share_contact, Command("share_contact"))
+    admin_router.message.register(cmd_share_contact_phone, _is_pending_share_contact)
+    admin_router.message.register(cmd_config_diff, Command("config_diff"))
 
     dp.include_router(user_router)
     dp.include_router(admin_router)
@@ -225,6 +228,7 @@ async def cmd_help_admin(message: Message) -> None:
         "- /user_history <id> [limit]\n"
         "- /user_audit <id> [limit]\n"
         "- /share_contact <id> <phone>\n"
+        "- /config_diff <from> <to>\n"
         "- /help_admin"
     )
 
@@ -289,6 +293,14 @@ async def cmd_status(
         f"- last_ticket_without_destination_at: {_fmt_ts(getattr(polling_state, 'last_ticket_without_destination_at', None))}",
         f"- last_admin_alert_at: {_fmt_ts(getattr(polling_state, 'last_admin_alert_at', None))}",
         f"- admin_alerts_skipped_rate_limit: {getattr(polling_state, 'admin_alerts_skipped_rate_limit', 0)}",
+        "",
+        "OBSERVABILITY (27B/27D):",
+        f"- last_web_alert_at: {_fmt_ts(getattr(polling_state, 'last_web_alert_at', None))}",
+        f"- web_alerts_skipped_rate_limit: {getattr(polling_state, 'web_alerts_skipped_rate_limit', 0)}",
+        f"- last_redis_alert_at: {_fmt_ts(getattr(polling_state, 'last_redis_alert_at', None))}",
+        f"- redis_alerts_skipped_rate_limit: {getattr(polling_state, 'redis_alerts_skipped_rate_limit', 0)}",
+        f"- last_rollback_alert_at: {_fmt_ts(getattr(polling_state, 'last_rollback_alert_at', None))}",
+        f"- rollback_alerts_skipped_rate_limit: {getattr(polling_state, 'rollback_alerts_skipped_rate_limit', 0)}",
     ]
     await message.answer("\n".join(lines))
 
@@ -624,18 +636,20 @@ async def cmd_share_contact(message: Message, user_store: UserStore) -> None:
 
     Ручной ввод телефона админом для указанного пользователя.
     """
-    parts = (message.text or "").split()
-    if len(parts) < 3:
-        await message.answer("Формат: /share_contact <telegram_id> <phone>")
+    target_id = _parse_target_id(message)
+    phone = _parse_phone_arg(message)
+
+    if target_id is None and phone is None:
+        await message.answer("Формат: /share_contact <telegram_id> <phone> (или ответ на сообщение пользователя)")
         return
-    try:
-        target_id = int(parts[1])
-    except Exception:
-        await message.answer("Некорректный telegram_id.")
+
+    if target_id is None:
+        await message.answer("Не удалось определить telegram_id. Ответьте на сообщение пользователя.")
         return
-    phone = parts[2].strip()
-    if not phone:
-        await message.answer("Телефон не указан.")
+
+    if phone is None:
+        _set_pending_share_contact(message.from_user.id, target_id)
+        await message.answer(f"Введите телефон для пользователя {target_id}.")
         return
 
     role = await user_store.get_role(target_id) or "user"
@@ -651,6 +665,38 @@ async def cmd_share_contact(message: Message, user_store: UserStore) -> None:
         action="U:share_contact_admin",
         actor_id=message.from_user.id if message.from_user else None,
     )
+    await message.answer(f"✅ Телефон сохранён для пользователя {target_id}.")
+
+
+async def cmd_share_contact_phone(message: Message, user_store: UserStore) -> None:
+    """
+    Принимает телефон для ранее начатого /share_contact без параметров.
+    """
+    if message.from_user is None or message.text is None:
+        return
+    pending = _get_pending_share_contact(message.from_user.id)
+    if pending is None:
+        return
+    phone = _parse_phone_text(message.text)
+    if phone is None:
+        await message.answer("Некорректный телефон. Попробуйте ещё раз.")
+        return
+
+    target_id = int(pending["target_id"])
+    role = await user_store.get_role(target_id) or "user"
+    profile = TgProfile(
+        telegram_id=target_id,
+        username="",
+        full_name="",
+        phone=phone,
+    )
+    await user_store.upsert_profile(profile, role=role)
+    await user_store.log_audit(
+        telegram_id=target_id,
+        action="U:share_contact_admin",
+        actor_id=message.from_user.id if message.from_user else None,
+    )
+    _clear_pending_share_contact(message.from_user.id)
     await message.answer(f"✅ Телефон сохранён для пользователя {target_id}.")
 
 
@@ -872,6 +918,42 @@ async def cmd_user_audit(message: Message, user_store: UserStore) -> None:
     await message.answer("\n".join(lines), reply_markup=ReplyKeyboardRemove())
 
 
+async def cmd_config_diff(message: Message, web_client: WebClient, config_admin_token: str) -> None:
+    """
+    /config_diff <from> <to>
+
+    Показывает diff между версиями конфига.
+    """
+    parts = (message.text or "").split()
+    if len(parts) < 3:
+        await message.answer("Формат: /config_diff <from> <to>")
+        return
+    try:
+        v_from = int(parts[1])
+        v_to = int(parts[2])
+    except Exception:
+        await message.answer("Некорректные версии.")
+        return
+
+    res = await web_client.get_config_diff(v_from=v_from, v_to=v_to, admin_token=config_admin_token)
+    if not res.get("ok"):
+        await message.answer(f"❌ Не удалось получить diff: {res.get('error')}")
+        return
+    data = res.get("data", {})
+    changes = data.get("changes") or []
+    if not changes:
+        await message.answer("Изменений нет.")
+        return
+
+    lines = [f"Diff {v_from} -> {v_to} (первые 20):"]
+    for ch in changes[:20]:
+        path = ch.get("path")
+        frm = ch.get("from")
+        to = ch.get("to")
+        lines.append(f"- {path}: {frm} -> {to}")
+    await message.answer("\n".join(lines))
+
+
 def _parse_target_id(message: Message) -> Optional[int]:
     """
     Берём id из аргумента команды или из reply.
@@ -1043,3 +1125,45 @@ def _parse_phone_arg(message: Message) -> Optional[str]:
     if not phone:
         return None
     return phone
+
+
+def _parse_phone_text(text: str) -> Optional[str]:
+    """
+    Парсит телефон из обычного текста.
+    """
+    phone = text.strip()
+    if not phone:
+        return None
+    return phone
+
+
+def _set_pending_share_contact(admin_id: int, target_id: int) -> None:
+    _PENDING_SHARE_CONTACT[admin_id] = {
+        "target_id": target_id,
+        "expires_at": time.time() + 300,
+    }
+
+
+def _get_pending_share_contact(admin_id: int) -> Optional[dict[str, object]]:
+    item = _PENDING_SHARE_CONTACT.get(admin_id)
+    if not item:
+        return None
+    if float(item.get("expires_at", 0)) < time.time():
+        _PENDING_SHARE_CONTACT.pop(admin_id, None)
+        return None
+    return item
+
+
+def _clear_pending_share_contact(admin_id: int) -> None:
+    _PENDING_SHARE_CONTACT.pop(admin_id, None)
+
+
+def _is_pending_share_contact(message: Message) -> bool:
+    """
+    Фильтр для ввода телефона админом без параметров.
+    """
+    if message.text is None or message.from_user is None:
+        return False
+    if message.text.strip().startswith("/"):
+        return False
+    return _get_pending_share_contact(message.from_user.id) is not None

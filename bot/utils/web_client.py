@@ -74,3 +74,41 @@ class WebClient:
 
             self._cache = (now, health, ready)
             return health, ready
+
+    async def get_rollbacks(self, *, window_s: int, admin_token: str) -> dict[str, object]:
+        """
+        Возвращает статистику rollback за период.
+        """
+        url = f"{self.base_url}/config/rollbacks"
+        timeout = aiohttp.ClientTimeout(total=self.timeout_s)
+        headers = {"X-Admin-Token": admin_token} if admin_token else {}
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, params={"window_s": str(window_s)}, headers=headers) as r:
+                    data = await r.json()
+                    if r.status >= 400:
+                        return {"ok": False, "error": data.get("error") or str(data)}
+                    return {"ok": True, "data": data}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    async def get_config_diff(self, *, v_from: int, v_to: int, admin_token: str) -> dict[str, object]:
+        """
+        Возвращает diff между версиями конфига.
+        """
+        url = f"{self.base_url}/config/diff"
+        timeout = aiohttp.ClientTimeout(total=self.timeout_s)
+        headers = {"X-Admin-Token": admin_token} if admin_token else {}
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    url,
+                    params={"from": str(v_from), "to": str(v_to)},
+                    headers=headers,
+                ) as r:
+                    data = await r.json()
+                    if r.status >= 400:
+                        return {"ok": False, "error": data.get("error") or str(data)}
+                    return {"ok": True, "data": data}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}

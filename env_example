@@ -14,102 +14,165 @@
 # -----------------------------
 # Общие параметры
 # -----------------------------
+# Среда запуска: local/staging/prod.
 ENVIRONMENT=prod
+# SHA текущего коммита (для /status).
 GIT_SHA=unknown
+# Уровень логирования приложения.
 LOG_LEVEL=INFO
+# Таймзона контейнера.
 TZ=Europe/Moscow
 
 # -----------------------------
 # Telegram доступ
 # -----------------------------
-# Списки id через запятую
+# Список admin id через запятую.
 TG_ADMINS=123456789,987654321
+# Список user id через запятую.
 TG_USERS=111222333,444555666
 
 # -----------------------------
 # Web сервис
 # -----------------------------
+# Порт web-сервиса внутри контейнера.
 PORT=8000
+# Строгая readiness-проверка (1/0).
 STRICT_READINESS=1
 
-# База IntraService (ServiceDesk)
+# База IntraService (ServiceDesk) — корневой URL.
 SERVICEDESK_BASE_URL=https://support.example.org
+# Логин для Basic Auth.
 SERVICEDESK_LOGIN=sd_bot
+# Пароль для Basic Auth.
 SERVICEDESK_PASSWORD=__REPLACE_ME__
+# Таймаут запросов к IntraService (сек).
 SERVICEDESK_TIMEOUT_S=10
 
-# Токен бота нужен для readiness web (проверка наличия env)
+# Токен бота нужен для readiness web (проверка наличия env).
 TELEGRAM_BOT_TOKEN=123456:ABCDEF
 
 # -----------------------------
 # База данных (Postgres)
 # -----------------------------
+# Название БД.
 POSTGRES_DB=testci
+# Пользователь БД.
 POSTGRES_USER=testci
+# Пароль БД.
 POSTGRES_PASSWORD=__REPLACE_ME__
+# Строка подключения к Postgres.
 DATABASE_URL=postgresql+psycopg2://testci:__REPLACE_ME__@postgres:5432/testci
 
 # -----------------------------
 # Runtime-конфиг бота (web /config)
 # -----------------------------
+# Полный URL для /config.
 CONFIG_URL=http://web:8000/config
+# Токен на чтение /config (опционально).
 CONFIG_TOKEN=__REPLACE_ME__
+# Админ-токен для изменения /config.
 CONFIG_ADMIN_TOKEN=__REPLACE_ME__
+# TTL кеша конфига (сек).
 CONFIG_TTL_S=60
+# Таймаут запроса конфига (сек).
 CONFIG_TIMEOUT_S=2.5
 
 # -----------------------------
 # Bot: связи с web
 # -----------------------------
+# Базовый URL web-сервиса для бота.
 WEB_BASE_URL=http://web:8000
+# Таймаут запросов к web (сек).
 WEB_TIMEOUT_S=1.5
+# TTL кеша web проверок (сек).
 WEB_CACHE_TTL_S=3.0
+# Таймаут /sd/open (сек).
 SD_WEB_TIMEOUT_S=3
 
 # -----------------------------
 # Bot: Redis
 # -----------------------------
+# URL Redis.
 REDIS_URL=redis://redis:6379/0
+# Таймаут чтения сокета Redis (сек).
 REDIS_SOCKET_TIMEOUT_S=1.0
+# Таймаут подключения к Redis (сек).
 REDIS_CONNECT_TIMEOUT_S=1.0
 
 # -----------------------------
 # Bot: polling и лимиты
 # -----------------------------
+# Интервал polling (сек).
 POLL_INTERVAL_S=30
+# Максимальный backoff (сек).
 POLL_MAX_BACKOFF_S=300
+# Минимальная частота уведомлений (сек).
 MIN_NOTIFY_INTERVAL_S=60
+# Максимум заявок в одном сообщении.
 MAX_ITEMS_IN_MESSAGE=10
 
 # -----------------------------
 # Routing (fallback через env)
 # -----------------------------
+# Chat ID для default routing.
 ROUTES_DEFAULT_CHAT_ID=-1001234567890
+# Thread ID для default routing (0 = без треда).
 ROUTES_DEFAULT_THREAD_ID=0
+# Имя поля service_id в заявке.
 ROUTES_SERVICE_ID_FIELD=ServiceId
+# Имя поля customer_id в заявке.
 ROUTES_CUSTOMER_ID_FIELD=CustomerId
+# JSON-правила маршрутизации.
 ROUTES_RULES=[]
 
 # -----------------------------
 # Эскалация (fallback через env)
 # -----------------------------
+# Включить эскалацию (0/1).
 ESCALATION_ENABLED=0
+# Таймаут эскалации (сек).
 ESCALATION_AFTER_S=600
+# Chat ID назначения эскалации.
 ESCALATION_DEST_CHAT_ID=-1001234567890
+# Thread ID назначения эскалации (0 = без треда).
 ESCALATION_DEST_THREAD_ID=0
+# Упоминание для эскалации.
 ESCALATION_MENTION=@duty_engineer
+# Имя поля service_id для фильтра эскалации.
 ESCALATION_SERVICE_ID_FIELD=ServiceId
+# Имя поля customer_id для фильтра эскалации.
 ESCALATION_CUSTOMER_ID_FIELD=CustomerId
+# JSON-фильтр эскалации.
 ESCALATION_FILTER={}
 
 # -----------------------------
 # Admin alerts (27A)
 # -----------------------------
+# Chat ID админских алертов.
 ADMIN_ALERT_CHAT_ID=
+# Thread ID админских алертов.
 ADMIN_ALERT_THREAD_ID=
+# Минимальный интервал алертов (сек).
 ADMIN_ALERT_MIN_INTERVAL_S=300
+
+# -----------------------------
+# Observability (27B/27D)
+# -----------------------------
+# Интервал проверок деградации (сек).
+OBS_CHECK_INTERVAL_S=60
+# Окно для проверки rollback (сек).
+OBS_ROLLBACK_WINDOW_S=3600
+# Порог rollback для алерта.
+OBS_ROLLBACK_THRESHOLD=3
+# Интервал алертов web деградации (сек).
+OBS_WEB_ALERT_MIN_INTERVAL_S=300
+# Интервал алертов redis деградации (сек).
+OBS_REDIS_ALERT_MIN_INTERVAL_S=300
+# Интервал алертов rollback (сек).
+OBS_ROLLBACK_ALERT_MIN_INTERVAL_S=300
 
 # -----------------------------
 # Тесты (integration)
 # -----------------------------
+# URL для интеграционных тестов.
 WEB_TEST_URL=http://localhost:8000

@@ -82,6 +82,7 @@ class BotSettings:
     config_token: str
     config_ttl_s: float
     config_timeout_s: float
+    config_admin_token: str
     database_url: str
     tg_admins: tuple[int, ...]
     tg_users: tuple[int, ...]
@@ -92,6 +93,13 @@ class BotSettings:
     poll_max_backoff_s: float
     min_notify_interval_s: float
     max_items_in_message: int
+    obs_check_interval_s: float
+    obs_rollback_window_s: int
+    obs_rollback_threshold: int
+    admin_alert_min_interval_s: float
+    obs_web_alert_min_interval_s: float
+    obs_redis_alert_min_interval_s: float
+    obs_rollback_alert_min_interval_s: float
 
     @classmethod
     def from_env(cls) -> "BotSettings":
@@ -113,6 +121,7 @@ class BotSettings:
         config_token = get_env("CONFIG_TOKEN", "").strip()
         config_ttl_s = get_env_float("CONFIG_TTL_S", "60")
         config_timeout_s = get_env_float("CONFIG_TIMEOUT_S", "2.5")
+        config_admin_token = get_env("CONFIG_ADMIN_TOKEN", "").strip()
 
         database_url = get_env("DATABASE_URL", "").strip()
         database_url = normalize_database_url(database_url)
@@ -129,6 +138,14 @@ class BotSettings:
         min_notify_interval_s = get_env_float("MIN_NOTIFY_INTERVAL_S", "60")
         max_items_in_message = get_env_int("MAX_ITEMS_IN_MESSAGE", "10")
 
+        obs_check_interval_s = get_env_float("OBS_CHECK_INTERVAL_S", "60")
+        obs_rollback_window_s = get_env_int("OBS_ROLLBACK_WINDOW_S", "3600")
+        obs_rollback_threshold = get_env_int("OBS_ROLLBACK_THRESHOLD", "3")
+        admin_alert_min_interval_s = get_env_float("ADMIN_ALERT_MIN_INTERVAL_S", "300")
+        obs_web_alert_min_interval_s = get_env_float("OBS_WEB_ALERT_MIN_INTERVAL_S", "300")
+        obs_redis_alert_min_interval_s = get_env_float("OBS_REDIS_ALERT_MIN_INTERVAL_S", "300")
+        obs_rollback_alert_min_interval_s = get_env_float("OBS_ROLLBACK_ALERT_MIN_INTERVAL_S", "300")
+
         return cls(
             token=token,
             web_base_url=web_base_url,
@@ -140,6 +157,7 @@ class BotSettings:
             config_token=config_token,
             config_ttl_s=config_ttl_s,
             config_timeout_s=config_timeout_s,
+            config_admin_token=config_admin_token,
             database_url=database_url,
             tg_admins=tg_admins,
             tg_users=tg_users,
@@ -150,4 +168,11 @@ class BotSettings:
             poll_max_backoff_s=poll_max_backoff_s,
             min_notify_interval_s=min_notify_interval_s,
             max_items_in_message=max_items_in_message,
+            obs_check_interval_s=obs_check_interval_s,
+            obs_rollback_window_s=obs_rollback_window_s,
+            obs_rollback_threshold=obs_rollback_threshold,
+            admin_alert_min_interval_s=admin_alert_min_interval_s,
+            obs_web_alert_min_interval_s=obs_web_alert_min_interval_s,
+            obs_redis_alert_min_interval_s=obs_redis_alert_min_interval_s,
+            obs_rollback_alert_min_interval_s=obs_rollback_alert_min_interval_s,
         )

@@ -132,6 +132,53 @@ def list_history(engine: Engine, limit: int = 20) -> list[dict[str, Any]]:
         ]
 
 
+def get_config_by_version(engine: Engine, version: int) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """
+    Возвращает конфиг по версии.
+
+    Источник:
+    - текущий config (bot_config) если версия совпадает;
+    - история (bot_config_history) для старых версий.
+    """
+    Session = sessionmaker(bind=engine, future=True)
+    with Session() as s:
+        current = s.get(BotConfig, 1)
+        if current and current.version == version:
+            data = json.loads(current.config_json)
+            data["version"] = current.version
+            return data, None
+
+        hist = (
+            s.query(BotConfigHistory)
+            .filter(BotConfigHistory.version == version)
+            .one_or_none()
+        )
+        if not hist:
+            return None, f"version {version} not found"
+
+        data = json.loads(hist.config_json)
+        data["version"] = hist.version
+        return data, None
+
+
+def count_rollbacks_since(engine: Engine, since_dt: datetime) -> tuple[int, Optional[datetime]]:
+    """
+    Возвращает количество rollback за период и время последнего rollback.
+    """
+    Session = sessionmaker(bind=engine, future=True)
+    with Session() as s:
+        rows = (
+            s.query(BotConfigHistory)
+            .filter(BotConfigHistory.created_at >= since_dt)
+            .filter(BotConfigHistory.comment.like("rollback%"))
+            .order_by(BotConfigHistory.created_at.desc())
+            .all()
+        )
+        if not rows:
+            return 0, None
+        return len(rows), rows[0].created_at
+
+
 def rollback_to_version(engine: Engine, version: int) -> int:
     """
     Делает rollback:

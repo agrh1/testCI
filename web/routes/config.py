@@ -4,12 +4,21 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
 
 from web.config_validation import ConfigValidationError, validate_config
-from web.db import list_history, read_config, rollback_to_version, write_config
+from web.db import (
+    count_rollbacks_since,
+    get_config_by_version,
+    list_history,
+    read_config,
+    rollback_to_version,
+    write_config,
+)
+from web.utils.diff import diff_dicts
 
 bp = Blueprint("config", __name__)
 
@@ -122,3 +131,71 @@ def rollback_config():
         return jsonify({"error": str(e)}), 400
 
     return jsonify({"ok": True, "version": new_version})
+
+
+@bp.get("/config/diff")
+def config_diff():
+    """
+    Diff между версиями конфига.
+    query params:
+    - from: версия
+    - to: версия
+    """
+    admin_token = current_app.config.get("CONFIG_ADMIN_TOKEN", "")
+    got = request.headers.get("X-Admin-Token", "").strip()
+    if not admin_token or got != admin_token:
+        return jsonify({"error": "unauthorized"}), 401
+
+    engine = _get_db_engine()
+    if engine is None:
+        return jsonify({"error": "db disabled"}), 500
+
+    try:
+        v_from = int(request.args.get("from"))
+        v_to = int(request.args.get("to"))
+    except Exception:
+        return jsonify({"error": "invalid params"}), 400
+
+    cfg_from, err_from = get_config_by_version(engine, v_from)
+    if err_from:
+        return jsonify({"error": "from_version_not_found", "detail": err_from}), 404
+    cfg_to, err_to = get_config_by_version(engine, v_to)
+    if err_to:
+        return jsonify({"error": "to_version_not_found", "detail": err_to}), 404
+
+    changes = diff_dicts(cfg_from, cfg_to)
+    return jsonify({"from": v_from, "to": v_to, "changes": changes})
+
+
+@bp.get("/config/rollbacks")
+def config_rollbacks():
+    """
+    Статистика rollback за период.
+    query params:
+    - window_s: окно в секундах (по умолчанию 3600)
+    """
+    admin_token = current_app.config.get("CONFIG_ADMIN_TOKEN", "")
+    got = request.headers.get("X-Admin-Token", "").strip()
+    if not admin_token or got != admin_token:
+        return jsonify({"error": "unauthorized"}), 401
+
+    engine = _get_db_engine()
+    if engine is None:
+        return jsonify({"error": "db disabled"}), 500
+
+    try:
+        window_s = int(request.args.get("window_s", "3600"))
+    except Exception:
+        window_s = 3600
+    window_s = max(60, min(window_s, 86400))
+
+    since_dt = datetime.utcnow() - timedelta(seconds=window_s)
+    count, last_at = count_rollbacks_since(engine, since_dt)
+
+    return jsonify(
+        {
+            "window_s": window_s,
+            "count": count,
+            "last_rollback_at": last_at.isoformat() if last_at else None,
+        }
+    )

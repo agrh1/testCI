@@ -101,3 +101,49 @@ def build_no_destination_alert_text(
         "Action: проверь routing-конфиг (rules/default_dest).",
     ]
     return "\n".join(lines)
+
+
+def build_web_degraded_alert_text(*, health_ok: bool, ready_ok: bool, health_status: object, ready_status: object) -> str:
+    """
+    Алерт при деградации web (/health или /ready).
+    """
+    lines = [
+        "⚠️ Web деградировал",
+        "",
+        f"- health: {'ok' if health_ok else 'fail'} (status={health_status})",
+        f"- ready: {'ok' if ready_ok else 'fail'} (status={ready_status})",
+        "",
+        "Action: проверь web /health и /ready.",
+    ]
+    return "\n".join(lines)
+
+
+def build_redis_degraded_alert_text(*, error: str, last_ok_ts: Optional[float]) -> str:
+    """
+    Алерт при деградации Redis/StateStore.
+    """
+    lines = [
+        "⚠️ Redis деградировал",
+        "",
+        f"- last_ok: {fmt_ts(last_ok_ts)}",
+        f"- error: {error or '—'}",
+        "",
+        "Action: проверь Redis и сеть.",
+    ]
+    return "\n".join(lines)
+
+
+def build_rollbacks_alert_text(*, count: int, window_s: int, last_at: Optional[str]) -> str:
+    """
+    Алерт при частых rollback конфига.
+    """
+    lines = [
+        "⚠️ Частые rollback конфигурации",
+        "",
+        f"- window_s: {window_s}",
+        f"- count: {count}",
+        f"- last_rollback_at: {last_at or '—'}",
+        "",
+        "Action: проверь /config/history и причины откатов.",
+    ]
+    return "\n".join(lines)
