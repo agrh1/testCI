@@ -574,7 +574,7 @@ async def main() -> None:
 
     fallback_store = MemoryStateStore()
     state_store = ResilientStateStore(base_store, fallback_store)
-    
+
     logger.info("State store: %s", store_kind)
 
     polling_state = PollingState()
