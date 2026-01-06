@@ -1,3 +1,10 @@
+"""
+Проверка наличия ключевых переменных в эталонном env-файле.
+
+Используется как быстрый sanity-check: если в env_example чего-то нет,
+значит конфигурация проекта неполная.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,12 +15,12 @@ REQUIRED_KEYS = {
     "TELEGRAM_BOT_TOKEN",
     "WEB_BASE_URL",
     "SERVICEDESK_BASE_URL",
-    "SERVICEDESK_API_TOKEN",
+    "SERVICEDESK_LOGIN",
+    "SERVICEDESK_PASSWORD",
 }
 
 TEMPLATE_FILES = [
-    Path(".envs/.env.staging.example"),
-    Path(".envs/.env.prod.example"),
+    Path("env_example"),
 ]
 
 

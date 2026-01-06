@@ -1,3 +1,7 @@
+"""
+Тесты эндпоинта /status для web-сервиса.
+"""
+
 from __future__ import annotations
 
 from app import app

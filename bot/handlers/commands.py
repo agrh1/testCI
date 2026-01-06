@@ -213,7 +213,7 @@ async def cmd_status(
         f"- last_notify_attempt_at: {_fmt_ts(polling_state.last_notify_attempt_at)}",
         f"- notify_skipped_rate_limit: {polling_state.notify_skipped_rate_limit}",
         "",
-        "ROUTING OBSERVABILITY (27A):",
+        "ROUTING OBSERVABILITY:",
         f"- tickets_without_destination_total: {getattr(polling_state, 'tickets_without_destination_total', 0)}",
         f"- last_ticket_without_destination_at: {_fmt_ts(getattr(polling_state, 'last_ticket_without_destination_at', None))}",
         f"- last_admin_alert_at: {_fmt_ts(getattr(polling_state, 'last_admin_alert_at', None))}",

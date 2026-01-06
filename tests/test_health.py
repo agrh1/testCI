@@ -1,3 +1,9 @@
+"""
+Тесты эндпоинта /health для web-сервиса.
+
+Включают unit и integration проверки.
+"""
+
 from __future__ import annotations
 
 import json

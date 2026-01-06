@@ -1,3 +1,11 @@
+"""
+Алерты для админов/дежурных.
+
+Содержит:
+- парсинг destination из env;
+- сборку текста алерта "нет destination".
+"""
+
 from __future__ import annotations
 
 import time
@@ -25,10 +33,10 @@ def parse_admin_alert_dest_from_env() -> Optional[AdminAlertDestination]:
     1) ADMIN_ALERT_CHAT_ID / ADMIN_ALERT_THREAD_ID
     2) ALERT_CHAT_ID / ALERT_THREAD_ID (fallback, если используешь общий алерт-канал)
     """
-    # Prefer dedicated admin alert envs.
+    # Сначала пробуем отдельные переменные для admin-алертов.
     dest = parse_dest_from_env("ADMIN_ALERT")
     if dest is None:
-        # Fallback to the general ALERT destination, if configured.
+        # Иначе используем общий алерт-канал (если задан).
         dest = parse_dest_from_env("ALERT")
         if dest is None:
             return None
@@ -37,7 +45,7 @@ def parse_admin_alert_dest_from_env() -> Optional[AdminAlertDestination]:
 
 
 def _convert_env_dest(dest: EnvDestination) -> AdminAlertDestination:
-    # Keep types explicit; AdminAlertDestination is local to this module.
+    # Явно конвертируем тип: AdminAlertDestination локален для этого модуля.
     return AdminAlertDestination(chat_id=dest.chat_id, thread_id=dest.thread_id)
 
 

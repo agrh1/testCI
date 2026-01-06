@@ -1,3 +1,5 @@
+# Deploy-staging — выкладка в staging.
+
 name: Deploy (staging)
 
 on:

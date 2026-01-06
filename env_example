@@ -1,0 +1,108 @@
+# ============================================================================
+# Эталонный файл переменных окружения для проекта testCI.
+#
+# Пути на сервере:
+# - prod:    /opt/testci/.envs/.env.prod
+# - staging: /opt/testci/.envs/.env.staging
+# - local:   ./\.envs/.env.local (в репозитории)
+#
+# Примечание:
+# - Этот файл — пример. Его не подключаем напрямую, а копируем/заполняем.
+# - Значения ниже безопасны для примера, реальные секреты подставляйте на сервере.
+# ============================================================================
+
+# -----------------------------
+# Общие параметры
+# -----------------------------
+ENVIRONMENT=prod
+GIT_SHA=unknown
+LOG_LEVEL=INFO
+TZ=Europe/Moscow
+
+# -----------------------------
+# Web сервис
+# -----------------------------
+PORT=8000
+STRICT_READINESS=1
+
+# База IntraService (ServiceDesk)
+SERVICEDESK_BASE_URL=https://support.example.org
+SERVICEDESK_LOGIN=sd_bot
+SERVICEDESK_PASSWORD=__REPLACE_ME__
+SERVICEDESK_TIMEOUT_S=10
+
+# Токен бота нужен для readiness web (проверка наличия env)
+TELEGRAM_BOT_TOKEN=123456:ABCDEF
+
+# -----------------------------
+# База данных (Postgres)
+# -----------------------------
+POSTGRES_DB=testci
+POSTGRES_USER=testci
+POSTGRES_PASSWORD=__REPLACE_ME__
+DATABASE_URL=postgresql+psycopg2://testci:__REPLACE_ME__@postgres:5432/testci
+
+# -----------------------------
+# Runtime-конфиг бота (web /config)
+# -----------------------------
+CONFIG_URL=http://web:8000/config
+CONFIG_TOKEN=__REPLACE_ME__
+CONFIG_ADMIN_TOKEN=__REPLACE_ME__
+CONFIG_TTL_S=60
+CONFIG_TIMEOUT_S=2.5
+
+# -----------------------------
+# Bot: связи с web
+# -----------------------------
+WEB_BASE_URL=http://web:8000
+WEB_TIMEOUT_S=1.5
+WEB_CACHE_TTL_S=3.0
+SD_WEB_TIMEOUT_S=3
+
+# -----------------------------
+# Bot: Redis
+# -----------------------------
+REDIS_URL=redis://redis:6379/0
+REDIS_SOCKET_TIMEOUT_S=1.0
+REDIS_CONNECT_TIMEOUT_S=1.0
+
+# -----------------------------
+# Bot: polling и лимиты
+# -----------------------------
+POLL_INTERVAL_S=30
+POLL_MAX_BACKOFF_S=300
+MIN_NOTIFY_INTERVAL_S=60
+MAX_ITEMS_IN_MESSAGE=10
+
+# -----------------------------
+# Routing (fallback через env)
+# -----------------------------
+ROUTES_DEFAULT_CHAT_ID=-1001234567890
+ROUTES_DEFAULT_THREAD_ID=0
+ROUTES_SERVICE_ID_FIELD=ServiceId
+ROUTES_CUSTOMER_ID_FIELD=CustomerId
+ROUTES_RULES=[]
+
+# -----------------------------
+# Эскалация (fallback через env)
+# -----------------------------
+ESCALATION_ENABLED=0
+ESCALATION_AFTER_S=600
+ESCALATION_DEST_CHAT_ID=-1001234567890
+ESCALATION_DEST_THREAD_ID=0
+ESCALATION_MENTION=@duty_engineer
+ESCALATION_SERVICE_ID_FIELD=ServiceId
+ESCALATION_CUSTOMER_ID_FIELD=CustomerId
+ESCALATION_FILTER={}
+
+# -----------------------------
+# Admin alerts
+# -----------------------------
+ADMIN_ALERT_CHAT_ID=
+ADMIN_ALERT_THREAD_ID=
+ADMIN_ALERT_MIN_INTERVAL_S=300
+
+# -----------------------------
+# Тесты (integration)
+# -----------------------------
+WEB_TEST_URL=http://localhost:8000
