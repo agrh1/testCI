@@ -13,7 +13,9 @@ from aiogram.filters import Command
 from aiogram.types import ErrorEvent, Message
 
 from bot import ping_reply_text
+from bot.utils.admin_alerts import build_no_destination_alert_text, parse_admin_alert_dest_from_env
 from bot.utils.config_client import ConfigClient
+from bot.utils.env_helpers import EnvDestination, parse_dest_from_env
 from bot.utils.escalation import EscalationFilter
 from bot.utils.notify_router import Destination, explain_matches, parse_rules, pick_destinations
 from bot.utils.polling import PollingState, polling_open_queue_loop
@@ -63,13 +65,10 @@ def _to_int(x: str) -> Optional[int]:
 
 
 def _parse_dest_from_env(prefix: str) -> Optional[Destination]:
-    chat_id = _to_int(os.getenv(f"{prefix}_CHAT_ID", "").strip())
-    if chat_id is None:
+    dest = parse_dest_from_env(prefix)
+    if dest is None:
         return None
-    thread_id = _to_int(os.getenv(f"{prefix}_THREAD_ID", "").strip())
-    if thread_id == 0:
-        thread_id = None
-    return Destination(chat_id=chat_id, thread_id=thread_id)
+    return _convert_env_dest(dest)
 
 
 def _parse_kv_args(text: str) -> dict[str, str]:
@@ -89,6 +88,11 @@ def _parse_kv_args(text: str) -> dict[str, str]:
             if end != -1:
                 out["name"] = text[start:end]
     return out
+
+
+def _convert_env_dest(dest: EnvDestination) -> Destination:
+    # Translate from shared env helper type to the routing Destination type.
+    return Destination(chat_id=dest.chat_id, thread_id=dest.thread_id)
 
 
 def _build_fake_item(
@@ -261,6 +265,12 @@ async def cmd_status(
         "NOTIFY RATE-LIMIT:",
         f"- last_notify_attempt_at: {_fmt_ts(polling_state.last_notify_attempt_at)}",
         f"- notify_skipped_rate_limit: {polling_state.notify_skipped_rate_limit}",
+        "",
+        "ROUTING OBSERVABILITY:",
+        f"- tickets_without_destination_total: {getattr(polling_state, 'tickets_without_destination_total', 0)}",
+        f"- last_ticket_without_destination_at: {_fmt_ts(getattr(polling_state, 'last_ticket_without_destination_at', None))}",
+        f"- last_admin_alert_at: {_fmt_ts(getattr(polling_state, 'last_admin_alert_at', None))}",
+        f"- admin_alerts_skipped_rate_limit: {getattr(polling_state, 'admin_alerts_skipped_rate_limit', 0)}",
     ]
     await message.answer("\n".join(lines))
 
@@ -652,7 +662,51 @@ async def main() -> None:
             customer_id_field=runtime_config.routing.customer_id_field,
         )
         if not dests:
-            logging.getLogger("bot.notify").info("No destinations configured for main notify, skip.")
+            # -----------------------------
+            # Шаг 27A: тикет пришёл, но destinations не найден
+            # -----------------------------
+            logger = logging.getLogger("bot.routing_observability")
+
+            now = time.time()
+            polling_state.tickets_without_destination_total += 1
+            polling_state.last_ticket_without_destination_at = now
+
+            min_interval_s = float(os.getenv("ADMIN_ALERT_MIN_INTERVAL_S", "300"))
+            if (
+                polling_state.last_admin_alert_at is not None
+                and (now - float(polling_state.last_admin_alert_at)) < min_interval_s
+            ):
+                polling_state.admin_alerts_skipped_rate_limit += 1
+                logger.info("No destinations; admin alert skipped by rate-limit.")
+                return
+
+            dest_admin = parse_admin_alert_dest_from_env()
+            alert_text = build_no_destination_alert_text(
+                ticket=items[0] if items else None,
+                rules_count=len(runtime_config.routing.rules),
+                default_dest_present=runtime_config.routing.default_dest is not None,
+                service_id_field=runtime_config.routing.service_id_field,
+                customer_id_field=runtime_config.routing.customer_id_field,
+                config_version=runtime_config.version,
+                config_source=runtime_config.source,
+            )
+
+            polling_state.last_admin_alert_at = now
+
+            if dest_admin is None:
+                logger.warning(
+                    "No destinations and ADMIN_ALERT_CHAT_ID/ALERT_CHAT_ID not set; cannot send admin alert."
+                )
+                return
+
+            try:
+                await bot.send_message(
+                    chat_id=dest_admin.chat_id,
+                    message_thread_id=dest_admin.thread_id,
+                    text=alert_text,
+                )
+            except Exception as e:
+                logger.exception("Failed to send admin alert: %s", e)
             return
         for d in dests:
             await bot.send_message(chat_id=d.chat_id, message_thread_id=d.thread_id, text=text)

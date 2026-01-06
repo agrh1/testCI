@@ -35,6 +35,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read(); print('ok')\""]
@@ -53,10 +55,29 @@ services:
       WEB_PORT: ${WEB_PORT}
     depends_on:
       redis:
+        condition: service_healthy      
+      postgres:
         condition: service_healthy
       web:
         condition: service_healthy
     restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: cd-demo-postgres-staging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-testci}
+      POSTGRES_USER: ${POSTGRES_USER:-testci}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-testci}
+    volumes:
+      - pg_staging_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
 
 volumes:
   redis_prod_data:

@@ -4,6 +4,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+from bot.utils.env_helpers import EnvDestination, parse_dest_from_env
+
 
 @dataclass(frozen=True)
 class AdminAlertDestination:
@@ -15,6 +17,28 @@ class AdminAlertDestination:
     """
     chat_id: int
     thread_id: Optional[int] = None
+
+
+def parse_admin_alert_dest_from_env() -> Optional[AdminAlertDestination]:
+    """
+    Приоритет:
+    1) ADMIN_ALERT_CHAT_ID / ADMIN_ALERT_THREAD_ID
+    2) ALERT_CHAT_ID / ALERT_THREAD_ID (fallback, если используешь общий алерт-канал)
+    """
+    # Prefer dedicated admin alert envs.
+    dest = parse_dest_from_env("ADMIN_ALERT")
+    if dest is None:
+        # Fallback to the general ALERT destination, if configured.
+        dest = parse_dest_from_env("ALERT")
+        if dest is None:
+            return None
+
+    return _convert_env_dest(dest)
+
+
+def _convert_env_dest(dest: EnvDestination) -> AdminAlertDestination:
+    # Keep types explicit; AdminAlertDestination is local to this module.
+    return AdminAlertDestination(chat_id=dest.chat_id, thread_id=dest.thread_id)
 
 
 def fmt_ts(ts: Optional[float]) -> str:
