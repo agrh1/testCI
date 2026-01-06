@@ -44,6 +44,7 @@ def register_handlers(dp: Dispatcher) -> None:
     user_router.message.register(cmd_help, Command("help"))
     user_router.message.register(cmd_ping, Command("ping"))
     user_router.message.register(cmd_share_phone, Command("share_phone"))
+    user_router.message.register(cmd_save_contact, lambda m: m.contact is not None)
 
     admin_router.message.register(cmd_status, Command("status"))
     admin_router.message.register(cmd_needs_web, Command("needs_web"), WebReadyFilter("/needs_web"))
@@ -167,14 +168,22 @@ def _match_escalation_filter(item: dict, flt: EscalationFilter, service_id_field
     return False
 
 
-async def cmd_start(message: Message) -> None:
-    await message.answer(
+async def cmd_start(message: Message, user_store: UserStore) -> None:
+    role = None
+    if message.from_user is not None:
+        role = await user_store.get_role(message.from_user.id)
+
+    text = (
         "Доступные команды:\n"
         "- /ping\n"
         "- /help\n"
         "- /share_phone (передать телефон для профиля)\n"
         "- /sd_open — показать открытые заявки"
     )
+    if role == "admin":
+        text += "\n\nАдминские команды:\n- /help_admin"
+
+    await message.answer(text)
 
 
 async def cmd_ping(message: Message) -> None:
@@ -209,6 +218,7 @@ async def cmd_help_admin(message: Message) -> None:
         "- /user_remove <id>\n"
         "- /admin_add <id>\n"
         "- /user_list [admins|users] [history]\n"
+        "- /user_list top10\n"
         "- /user_history <id> [limit]\n"
         "- /help_admin"
     )
@@ -546,6 +556,20 @@ async def cmd_share_phone(message: Message) -> None:
     )
 
 
+async def cmd_save_contact(message: Message, user_store: UserStore) -> None:
+    """
+    Сохраняет телефон из contact-сообщения.
+    """
+    if message.contact is None or message.from_user is None:
+        return
+    if message.contact.user_id != message.from_user.id:
+        await message.answer("Можно сохранить только свой номер.")
+        return
+    profile = _profile_from_message(message)
+    await user_store.update_profile(profile)
+    await message.answer("✅ Телефон сохранён.", reply_markup=ReplyKeyboardRemove())
+
+
 async def cmd_user_add(message: Message, user_store: UserStore) -> None:
     """
     /user_add <telegram_id>
@@ -610,6 +634,12 @@ async def cmd_user_list(message: Message, user_store: UserStore) -> None:
     """
     role_filter = _parse_role_filter(message)
     show_history = _parse_history_flag(message)
+    top10 = _parse_top10_flag(message)
+
+    if top10:
+        await _render_top10(message, user_store)
+        return
+
     items = await user_store.list_users(limit=200)
     if not items:
         await message.answer("Список пользователей пуст.", reply_markup=ReplyKeyboardRemove())
@@ -716,6 +746,51 @@ def _parse_history_flag(message: Message) -> bool:
     """
     parts = (message.text or "").split()
     return any(p.strip().lower() == "history" for p in parts[1:])
+
+
+def _parse_top10_flag(message: Message) -> bool:
+    parts = (message.text or "").split()
+    return any(p.strip().lower() == "top10" for p in parts[1:])
+
+
+async def _render_top10(message: Message, user_store: UserStore) -> None:
+    """
+    Рендерит топ-10 по последнему обращению и по частоте.
+    """
+    last_activity = await user_store.top_by_last_activity(limit=10)
+    by_freq = await user_store.top_by_frequency(limit=10)
+
+    lines = ["Топ-10 пользователей:"]
+
+    lines.append("")
+    lines.append("По последнему обращению:")
+    if not last_activity:
+        lines.append("— нет данных")
+    else:
+        for it in last_activity:
+            username = it.get("username") or ""
+            username_part = f"@{username}" if username else "—"
+            full_name = it.get("full_name") or "—"
+            last_cmd = it.get("last_command") or "—"
+            last_at = it.get("last_command_at")
+            last_at_s = last_at.strftime("%Y-%m-%d %H:%M:%S") if last_at else "—"
+            lines.append(f"- {it['telegram_id']} ({username_part}) {full_name} | {last_cmd} @ {last_at_s}")
+
+    lines.append("")
+    lines.append("По частоте обращений:")
+    if not by_freq:
+        lines.append("— нет данных")
+    else:
+        for it in by_freq:
+            username = it.get("username") or ""
+            username_part = f"@{username}" if username else "—"
+            full_name = it.get("full_name") or "—"
+            count = it.get("count", 0)
+            last_seen = it.get("last_seen")
+            last_seen_s = last_seen.strftime("%Y-%m-%d %H:%M:%S") if last_seen else "—"
+            lines.append(f"- {it['telegram_id']} ({username_part}) {full_name} | {count} | last: {last_seen_s}")
+
+    await message.answer("\n".join(lines), reply_markup=ReplyKeyboardRemove())
 
 
 async def _maybe_update_profile_from_reply(message: Message, user_store: UserStore) -> None:

@@ -87,6 +87,18 @@ class UserStore:
         """
         return await asyncio.to_thread(self._list_history_sync, telegram_id, limit)
 
+    async def top_by_last_activity(self, limit: int = 10) -> list[dict[str, object]]:
+        """
+        Топ по последнему обращению (last_command_at).
+        """
+        return await asyncio.to_thread(self._top_by_last_activity_sync, limit)
+
+    async def top_by_frequency(self, limit: int = 10) -> list[dict[str, object]]:
+        """
+        Топ по частоте обращений (count в истории).
+        """
+        return await asyncio.to_thread(self._top_by_frequency_sync, limit)
+
     def _connect(self):
         return psycopg2.connect(self._database_url)
 
@@ -244,6 +256,61 @@ class UserStore:
                 {
                     "command": str(r["command"]),
                     "created_at": r["created_at"],
+                }
+                for r in rows
+            ]
+
+    def _top_by_last_activity_sync(self, limit: int) -> list[dict[str, object]]:
+        with self._connect() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                SELECT telegram_id, role, username, full_name, phone, last_command, last_command_at
+                FROM tg_users
+                WHERE last_command_at IS NOT NULL
+                ORDER BY last_command_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+            return [
+                {
+                    "telegram_id": int(r["telegram_id"]),
+                    "role": str(r["role"]),
+                    "username": str(r["username"] or ""),
+                    "full_name": str(r["full_name"] or ""),
+                    "phone": str(r["phone"] or ""),
+                    "last_command": str(r["last_command"] or ""),
+                    "last_command_at": r["last_command_at"],
+                }
+                for r in rows
+            ]
+
+    def _top_by_frequency_sync(self, limit: int) -> list[dict[str, object]]:
+        with self._connect() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                SELECT u.telegram_id, u.role, u.username, u.full_name, u.phone,
+                       COUNT(h.id) AS cnt,
+                       MAX(h.created_at) AS last_seen
+                FROM tg_users u
+                JOIN tg_command_history h ON h.telegram_id = u.telegram_id
+                GROUP BY u.telegram_id, u.role, u.username, u.full_name, u.phone
+                ORDER BY cnt DESC, last_seen DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+            return [
+                {
+                    "telegram_id": int(r["telegram_id"]),
+                    "role": str(r["role"]),
+                    "username": str(r["username"] or ""),
+                    "full_name": str(r["full_name"] or ""),
+                    "phone": str(r["phone"] or ""),
+                    "count": int(r["cnt"]),
+                    "last_seen": r["last_seen"],
                 }
                 for r in rows
             ]
