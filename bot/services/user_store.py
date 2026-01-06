@@ -63,6 +63,12 @@ class UserStore:
         """
         await asyncio.to_thread(self._update_profile_sync, profile)
 
+    async def upsert_profile(self, profile: TgProfile, role: str) -> None:
+        """
+        Создаёт или обновляет профиль пользователя.
+        """
+        await asyncio.to_thread(self._upsert_profile_sync, profile, role)
+
     async def delete_user(self, telegram_id: int) -> None:
         """
         Удаляет пользователя из таблицы.
@@ -190,6 +196,22 @@ class UserStore:
                 WHERE telegram_id = %s
                 """,
                 (profile.username, profile.full_name, profile.phone, profile.telegram_id),
+            )
+
+    def _upsert_profile_sync(self, profile: TgProfile, role: str) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO tg_users (telegram_id, role, username, full_name, phone)
+                VALUES (%s, %s, NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''))
+                ON CONFLICT (telegram_id)
+                DO UPDATE SET
+                    username = NULLIF(EXCLUDED.username, ''),
+                    full_name = NULLIF(EXCLUDED.full_name, ''),
+                    phone = NULLIF(EXCLUDED.phone, ''),
+                    updated_at = now()
+                """,
+                (profile.telegram_id, role, profile.username, profile.full_name, profile.phone),
             )
 
     def _delete_user_sync(self, telegram_id: int) -> None:

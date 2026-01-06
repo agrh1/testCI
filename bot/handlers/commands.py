@@ -11,6 +11,7 @@ import time
 from typing import Optional
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
@@ -549,6 +550,10 @@ async def cmd_share_phone(message: Message, user_store: UserStore) -> None:
     if phone_arg:
         if message.from_user is None:
             return
+        role = await user_store.get_role(message.from_user.id)
+        if role is None:
+            await message.answer("⛔ Вы не зарегистрированы. Обратитесь к администратору.")
+            return
         profile = _profile_from_message(message)
         profile = TgProfile(
             telegram_id=profile.telegram_id,
@@ -556,7 +561,7 @@ async def cmd_share_phone(message: Message, user_store: UserStore) -> None:
             full_name=profile.full_name,
             phone=phone_arg,
         )
-        await user_store.update_profile(profile)
+        await user_store.upsert_profile(profile, role=role)
         await message.answer("✅ Телефон сохранён.", reply_markup=ReplyKeyboardRemove())
         return
 
@@ -565,11 +570,18 @@ async def cmd_share_phone(message: Message, user_store: UserStore) -> None:
         resize_keyboard=True,
         one_time_keyboard=True,
     )
-    await message.answer(
-        "Нажмите кнопку ниже, чтобы отправить номер телефона. "
-        "Он будет сохранён в вашем профиле.",
-        reply_markup=kb,
-    )
+    try:
+        await message.answer(
+            "Нажмите кнопку ниже, чтобы отправить номер телефона. "
+            "Он будет сохранён в вашем профиле.\n"
+            "Важно: отправка контакта доступна только в личном чате с ботом.",
+            reply_markup=kb,
+        )
+    except TelegramBadRequest:
+        await message.answer(
+            "⚠️ Отправка телефона доступна только в личном чате с ботом.\n"
+            "Напишите боту в личку и используйте /share_phone там."
+        )
 
 
 async def cmd_save_contact(message: Message, user_store: UserStore) -> None:
@@ -581,8 +593,12 @@ async def cmd_save_contact(message: Message, user_store: UserStore) -> None:
     if message.contact.user_id != message.from_user.id:
         await message.answer("Можно сохранить только свой номер.")
         return
+    role = await user_store.get_role(message.from_user.id)
+    if role is None:
+        await message.answer("⛔ Вы не зарегистрированы. Обратитесь к администратору.")
+        return
     profile = _profile_from_message(message)
-    await user_store.update_profile(profile)
+    await user_store.upsert_profile(profile, role=role)
     await message.answer("✅ Телефон сохранён.", reply_markup=ReplyKeyboardRemove())
 
 
