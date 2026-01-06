@@ -35,6 +35,16 @@ class PollingState:
     last_calculated_count: Optional[int] = None
     last_calculated_at: Optional[float] = None
 
+    # -----------------------------
+    # Шаг 27A: наблюдаемость routing
+    # -----------------------------
+    tickets_without_destination_total: int = 0
+    last_ticket_without_destination_at: Optional[float] = None
+
+    # rate-limit для админ-алертов (чтобы не заспамить)
+    last_admin_alert_at: Optional[float] = None
+    admin_alerts_skipped_rate_limit: int = 0
+
 
 def _fmt_state_message(*, normalized_items: list[dict[str, object]], max_items_in_message: int) -> str:
     now_s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
@@ -67,6 +77,12 @@ def load_polling_state_from_store(state: PollingState, store: StateStore, key: s
     state.last_notify_attempt_at = data.get("last_notify_attempt_at")
     state.notify_skipped_rate_limit = int(data.get("notify_skipped_rate_limit", 0))
 
+    # 27A
+    state.tickets_without_destination_total = int(data.get("tickets_without_destination_total", 0))
+    state.last_ticket_without_destination_at = data.get("last_ticket_without_destination_at")
+    state.last_admin_alert_at = data.get("last_admin_alert_at")
+    state.admin_alerts_skipped_rate_limit = int(data.get("admin_alerts_skipped_rate_limit", 0))
+
 
 def save_polling_state_to_store(state: PollingState, store: StateStore, key: str) -> None:
     payload = {
@@ -76,6 +92,11 @@ def save_polling_state_to_store(state: PollingState, store: StateStore, key: str
         "last_sent_at": state.last_sent_at,
         "last_notify_attempt_at": state.last_notify_attempt_at,
         "notify_skipped_rate_limit": state.notify_skipped_rate_limit,
+        # 27A
+        "tickets_without_destination_total": state.tickets_without_destination_total,
+        "last_ticket_without_destination_at": state.last_ticket_without_destination_at,
+        "last_admin_alert_at": state.last_admin_alert_at,
+        "admin_alerts_skipped_rate_limit": state.admin_alerts_skipped_rate_limit,
     }
     store.set_json(key, payload)
 
@@ -91,6 +112,8 @@ async def polling_open_queue_loop(
     notify_escalation: Optional[Callable[[list[dict], str], Awaitable[None]]] = None,
     # Функция, которая возвращает "тикеты для эскалации" на текущем цикле
     get_escalations: Optional[Callable[[list[dict]], list[dict]]] = None,
+    # Обновление runtime-конфига (если есть)
+    refresh_config: Optional[Callable[[], Awaitable[None]]] = None,
     base_interval_s: float = 30.0,
     max_backoff_s: float = 300.0,
     min_notify_interval_s: float = 60.0,
@@ -132,11 +155,13 @@ async def polling_open_queue_loop(
                 state.consecutive_failures = 0
                 interval_s = base_interval_s
 
+                if refresh_config is not None:
+                    await refresh_config()
+
                 # --- 1) Эскалации (не зависят от изменения снэпшота) ---
                 if notify_escalation is not None and get_escalations is not None:
                     escalations = get_escalations(res.items)
                     if escalations:
-                        # Текст эскалации формируем отдельно (в bot.py), тут только вызываем callback
                         await notify_escalation(escalations, "ESCALATION")
 
                 # --- 2) Основной список (как раньше — только при изменении) ---
