@@ -570,7 +570,6 @@ async def main() -> None:
     )
 
     redis_url = os.getenv("REDIS_URL", "").strip()
-    state_store: Optional[StateStore] = None
     if redis_url:
         socket_timeout_s = float(os.getenv("REDIS_SOCKET_TIMEOUT_S", "1.0"))
         socket_connect_timeout_s = float(os.getenv("REDIS_CONNECT_TIMEOUT_S", "1.0"))
@@ -584,6 +583,8 @@ async def main() -> None:
         state_store = ResilientStateStore(primary, fallback)
         with contextlib.suppress(Exception):
             getattr(state_store, "ping", lambda: None)()
+    else:
+        state_store = MemoryStateStore(prefix="testci")
 
     polling_state = PollingState()
     stop_event = asyncio.Event()
@@ -679,6 +680,7 @@ async def main() -> None:
             notify_main=notify_main,
             notify_escalation=notify_escalation,
             get_escalations=get_escalations,
+            refresh_config=refresh_runtime_config,
             base_interval_s=poll_interval_s,
             max_backoff_s=poll_max_backoff_s,
             min_notify_interval_s=min_notify_interval_s,

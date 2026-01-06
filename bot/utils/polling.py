@@ -112,6 +112,8 @@ async def polling_open_queue_loop(
     notify_escalation: Optional[Callable[[list[dict], str], Awaitable[None]]] = None,
     # Функция, которая возвращает "тикеты для эскалации" на текущем цикле
     get_escalations: Optional[Callable[[list[dict]], list[dict]]] = None,
+    # Обновление runtime-конфига (если есть)
+    refresh_config: Optional[Callable[[], Awaitable[None]]] = None,
     base_interval_s: float = 30.0,
     max_backoff_s: float = 300.0,
     min_notify_interval_s: float = 60.0,
@@ -152,6 +154,9 @@ async def polling_open_queue_loop(
                 state.last_error = None
                 state.consecutive_failures = 0
                 interval_s = base_interval_s
+
+                if refresh_config is not None:
+                    await refresh_config()
 
                 # --- 1) Эскалации (не зависят от изменения снэпшота) ---
                 if notify_escalation is not None and get_escalations is not None:
