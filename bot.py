@@ -560,7 +560,7 @@ async def main() -> None:
     web_base_url = _get_env("WEB_BASE_URL", required=True)
     web_client = WebClient(base_url=web_base_url)
 
-    web_guard = WebGuard(web_client)
+    web_guard = WebGuard(client=web_client)
     sd_web_client = SdWebClient(web_base_url)
 
     # state store
@@ -572,7 +572,9 @@ async def main() -> None:
         base_store = MemoryStateStore()
         store_kind = "memory"
 
-    state_store = ResilientStateStore(base_store)
+    fallback_store = MemoryStateStore()
+    state_store = ResilientStateStore(base_store, fallback_store)
+    
     logger.info("State store: %s", store_kind)
 
     polling_state = PollingState()
