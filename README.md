@@ -1,4 +1,226 @@
 <!-- README.md — основная документация проекта. -->
 
-# myapp
-Minimal Python app to demo GitHub Actions CI.
+# testCI
+
+Проект состоит из web‑сервиса и Telegram‑бота для мониторинга очереди заявок ServiceDesk (IntraService).
+Web отвечает за проксирование запросов к ServiceDesk и хранение runtime‑конфига, бот — за polling и отправку уведомлений в Telegram.
+
+## Состав
+
+- Web (Flask): /health, /ready, /status, /sd/open, /config*.
+- Bot (aiogram): polling очереди, routing, escalation, admin‑алерты.
+- Postgres: хранение runtime‑конфига и истории, плюс база пользователей бота.
+- Redis: state store для polling и эскалаций (fallback в память, если Redis нет).
+
+## Ключевой функционал
+
+- Получение открытых заявок ServiceDesk через /sd/open.
+- Routing уведомлений по правилам и default‑destination.
+- Эскалации при долгом ожидании.
+- Хранение и версияция runtime‑конфига (/config).
+- Админ‑алерты при деградации web/redis или проблемах routing.
+
+## Быстрый старт (local)
+
+1) Скопируйте шаблон окружения:
+
+```bash
+mkdir -p .envs
+cp env_example .envs/.env.local
+```
+
+2) Заполните `.envs/.env.local` (см. раздел ниже).
+
+3) Запустите контейнеры:
+
+```bash
+docker compose -f docker-compose.local.yml up --build -d
+```
+
+4) Проверьте доступность web:
+
+```bash
+curl -s http://localhost:8000/health
+```
+
+## Переменные окружения
+
+Шаблон с комментариями: `env_example`.
+
+### Общие
+
+- `ENVIRONMENT` — среда: `local|staging|prod`.
+- `APP_ENV` — значение для `FLASK_ENV` в compose.
+- `APP_VERSION` — версия образа для `docker-compose.prod.yml`.
+- `GIT_SHA` — SHA коммита для /status.
+- `LOG_LEVEL` — уровень логирования бота.
+- `TZ` — таймзона контейнеров.
+- `PORT` — порт web внутри контейнера (по умолчанию 8000).
+- `APP_PORT` — порт публикации web на хосте (compose).
+
+### Web + ServiceDesk
+
+- `SERVICEDESK_BASE_URL` — корневой URL IntraService.
+- `SERVICEDESK_LOGIN` / `SERVICEDESK_PASSWORD` — Basic Auth.
+- `SERVICEDESK_TIMEOUT_S` — таймаут запросов к ServiceDesk.
+- `TELEGRAM_BOT_TOKEN` — нужен web для readiness (проверка env).
+- `STRICT_READINESS` — строгая проверка env в /ready (1/0).
+
+### Bot ↔ Web
+
+- `WEB_BASE_URL` — базовый URL web‑сервиса для бота.
+- `WEB_TIMEOUT_S` — таймаут запросов к web (/health,/ready,/config).
+- `WEB_CACHE_TTL_S` — TTL кэша проверок web.
+- `SD_WEB_TIMEOUT_S` — таймаут запроса /sd/open.
+
+### Runtime‑config (web /config)
+
+- `CONFIG_URL` — полный URL до /config (по умолчанию `{WEB_BASE_URL}/config`).
+- `CONFIG_TOKEN` — токен на чтение /config (X‑Config‑Token).
+- `CONFIG_ADMIN_TOKEN` — токен админа для изменения /config (X‑Admin‑Token).
+- `CONFIG_TTL_S` — TTL кэша конфига у бота.
+- `CONFIG_TIMEOUT_S` — таймаут запроса /config.
+
+### База данных (Postgres)
+
+- `DATABASE_URL` — строка подключения (обязательна для бота).
+- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` — для compose‑контейнера.
+
+### Redis
+
+- `REDIS_URL` — если задан, state store будет в Redis.
+- `REDIS_SOCKET_TIMEOUT_S`, `REDIS_CONNECT_TIMEOUT_S` — таймауты Redis.
+
+### Polling и лимиты
+
+- `POLL_INTERVAL_S` — интервал опроса очереди.
+- `POLL_MAX_BACKOFF_S` — максимальный backoff при ошибках.
+- `MIN_NOTIFY_INTERVAL_S` — минимальный интервал между уведомлениями.
+- `MAX_ITEMS_IN_MESSAGE` — максимум заявок в одном сообщении.
+
+### Routing (fallback через env)
+
+- `ROUTES_DEFAULT_CHAT_ID`, `ROUTES_DEFAULT_THREAD_ID` — destination по умолчанию.
+- `ROUTES_SERVICE_ID_FIELD`, `ROUTES_CUSTOMER_ID_FIELD` — имена полей в заявке.
+- `ROUTES_RULES` — JSON с правилами маршрутизации.
+
+Пример `ROUTES_RULES`:
+
+```json
+[
+  {
+    "dest": {"chat_id": -100111, "thread_id": 10},
+    "keywords": ["VIP", "P1"],
+    "service_ids": [101, 102],
+    "customer_ids": [5001]
+  }
+]
+```
+
+### Эскалации (fallback через env)
+
+- `ESCALATION_ENABLED` — включить эскалацию (1/0).
+- `ESCALATION_AFTER_S` — через сколько секунд эскалировать.
+- `ESCALATION_DEST_CHAT_ID`, `ESCALATION_DEST_THREAD_ID` — destination эскалации.
+- `ESCALATION_MENTION` — кого упомянуть.
+- `ESCALATION_SERVICE_ID_FIELD`, `ESCALATION_CUSTOMER_ID_FIELD` — поля фильтра.
+- `ESCALATION_FILTER` — JSON‑фильтр (keywords/service_ids/customer_ids).
+
+### Admin‑alerts и observability
+
+- `ADMIN_ALERT_CHAT_ID`, `ADMIN_ALERT_THREAD_ID` — отдельный канал алертов.
+- `ALERT_CHAT_ID`, `ALERT_THREAD_ID` — fallback, если `ADMIN_ALERT_*` не задан.
+- `ADMIN_ALERT_MIN_INTERVAL_S` — rate‑limit алертов.
+- `OBS_CHECK_INTERVAL_S` — интервал проверок деградации.
+- `OBS_ROLLBACK_WINDOW_S`, `OBS_ROLLBACK_THRESHOLD` — параметры алертов rollback.
+- `OBS_WEB_ALERT_MIN_INTERVAL_S`, `OBS_REDIS_ALERT_MIN_INTERVAL_S`, `OBS_ROLLBACK_ALERT_MIN_INTERVAL_S` — rate‑limit.
+
+### Тесты
+
+- `WEB_TEST_URL` — URL web для integration‑тестов.
+
+## Работа с БД
+
+### Web (runtime‑config)
+
+Web хранит конфиг бота и историю версий в таблицах:
+
+- `bot_config` — текущая версия (id=1).
+- `bot_config_history` — история изменений и rollback.
+
+Если `DATABASE_URL` не задан, web работает без БД и /config отдаёт fallback‑конфиг.
+
+### Bot (user store)
+
+Бот хранит пользователей в Postgres:
+
+- `tg_users` — роли, профиль, последняя команда.
+- `tg_command_history` — история команд.
+- `tg_user_audit` — аудит админских действий.
+
+`DATABASE_URL` обязателен для запуска бота.
+
+## Работа с Redis
+
+Redis используется как state store. Ключи с префиксом `testci:`
+
+- `bot:polling_state` — состояние polling.
+- `bot:open_queue` — состояние очереди.
+- `bot:escalation` — состояние эскалаций.
+
+Если `REDIS_URL` не задан, используется in‑memory хранилище (без сохранения между рестартами).
+
+## /config: эндпоинты и примеры
+
+### Получить конфиг
+
+```bash
+curl -s -H "X-Config-Token: <token>" http://localhost:8000/config
+```
+
+### Обновить конфиг
+
+```bash
+curl -s -X PUT \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: <admin_token>" \
+  -d '{"routing": {"rules": [], "default_dest": {"chat_id": -1001}}, "escalation": {"enabled": false}}' \
+  http://localhost:8000/config
+```
+
+### История и diff
+
+```bash
+curl -s -H "X-Admin-Token: <admin_token>" http://localhost:8000/config/history
+curl -s -H "X-Admin-Token: <admin_token>" "http://localhost:8000/config/diff?from=1&to=2"
+```
+
+### Rollback
+
+```bash
+curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: <admin_token>" \
+  -d '{"version": 2}' \
+  http://localhost:8000/config/rollback
+```
+
+## Диагностика
+
+- `GET /health` — быстрый health‑check.
+- `GET /ready` — readiness с проверкой обязательных env.
+- `GET /status` — ENVIRONMENT + GIT_SHA.
+- Команда бота `/status` — состояние web/redis/config/polling.
+
+## Тесты
+
+```bash
+pytest -q
+```
+
+Integration‑тесты запускаются только если задан `WEB_TEST_URL`:
+
+```bash
+WEB_TEST_URL=http://localhost:8000 pytest -q
+```
+

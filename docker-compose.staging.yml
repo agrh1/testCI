@@ -56,8 +56,6 @@ services:
     environment:
       FLASK_ENV: ${APP_ENV}
       REDIS_URL: ${REDIS_URL}
-      WEB_HOST: ${WEB_HOST}   # важно: обращаемся к web-staging, а не к web (prod)
-      WEB_PORT: ${WEB_PORT}
     depends_on:
       redis:
         condition: service_healthy

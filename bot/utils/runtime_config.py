@@ -128,7 +128,15 @@ class RuntimeConfig:
 
     def _load_escalation_from_env(self, routing: RoutingConfig) -> EscalationConfig:
         enabled = os.getenv("ESCALATION_ENABLED", "0").strip().lower() in ("1", "true", "yes")
-        after_s = int(os.getenv("ESCALATION_AFTER_S", "600"))
+        def _get_int_env(name: str, default: int) -> int:
+            raw = os.getenv(name, str(default)).strip()
+            try:
+                return int(raw)
+            except Exception:
+                self._log.error("ENV %s must be int, got %r; using default %s", name, raw, default)
+                return default
+
+        after_s = _get_int_env("ESCALATION_AFTER_S", 600)
 
         # destination
         dest = None

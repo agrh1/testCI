@@ -1,9 +1,4 @@
-# tests/test_bot.py
-# Unit-тесты логики бота (без Telegram и сети).
-#
-# Важно: тестируем только "чистые" элементы:
-# - текст ответа /ping
-# - корректную сборку HEALTH_URL из WEB_BASE_URL
+"""Unit-тесты логики бота (без Telegram и сети)."""
 
 import importlib
 import os

@@ -1,6 +1,4 @@
-# intraservice_client.py
-# Клиент IntraService API (aiohttp), только то что нужно для шага: получить заявки со StatusId=31.
-# Комментарии на русском, максимально приземлённо для сопровождения.
+"""Клиент IntraService API (aiohttp) для получения заявок по статусу."""
 
 from __future__ import annotations
 

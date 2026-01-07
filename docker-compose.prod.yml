@@ -1,7 +1,7 @@
 # ============================================================================
-# docker-compose.staging.yml — staging окружение.
+# docker-compose.prod.yml — prod окружение.
 #
-# Отличия от prod:
+# Отличия от staging:
 #   - теги образов :v0.0.0
 #   - контейнеры: *-prod
 #   - порт: 8000
@@ -51,8 +51,6 @@ services:
     environment:
       FLASK_ENV: ${APP_ENV}
       REDIS_URL: ${REDIS_URL}
-      WEB_HOST: ${WEB_BASE_URL}   # важно: обращаемся к web-staging, а не к web (prod)
-      WEB_PORT: ${WEB_PORT}
     depends_on:
       redis:
         condition: service_healthy      
@@ -64,13 +62,13 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: cd-demo-postgres-staging
+    container_name: cd-demo-postgres-prod
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-testci}
       POSTGRES_USER: ${POSTGRES_USER:-testci}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-testci}
     volumes:
-      - pg_staging_data:/var/lib/postgresql/data
+      - pg_prod_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -81,4 +79,4 @@ services:
 
 volumes:
   redis_prod_data:
-
+  pg_prod_data:

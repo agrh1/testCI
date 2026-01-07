@@ -47,7 +47,7 @@ class WebClient:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url, headers={"X-Request-ID": request_id}) as r:
                     # Нам важен сам статус. Тело можно не читать полностью.
-                    await r.release()
+                    await r.read()
                     ok = 200 <= r.status < 300
                     dt = int((time.perf_counter() - t0) * 1000)
                     return WebCheckResult(ok=ok, status=r.status, error=None, duration_ms=dt, request_id=request_id)

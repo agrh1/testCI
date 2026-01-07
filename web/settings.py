@@ -21,12 +21,6 @@ REQUIRED_ENV_VARS = [
     "TELEGRAM_BOT_TOKEN",
 ]
 
-# Необязательные, но полезные для диагностики.
-OPTIONAL_ENV_VARS = [
-    "SERVICEDESK_API_TOKEN",
-    "SERVICEDESK_TIMEOUT_S",
-]
-
 
 def get_env(name: str, default: str | None = None) -> str:
     """

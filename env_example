@@ -16,6 +16,11 @@
 # -----------------------------
 # Среда запуска: local/staging/prod.
 ENVIRONMENT=prod
+# Переменные для docker-compose (deploy).
+# Версия образа (используется в docker-compose.prod.yml).
+APP_VERSION=0.0.0
+# Значение для FLASK_ENV (prod/staging/local).
+APP_ENV=prod
 # SHA текущего коммита (для /status).
 GIT_SHA=unknown
 # Уровень логирования приложения.
@@ -150,6 +155,9 @@ ESCALATION_FILTER={}
 # -----------------------------
 # Admin alerts (27A)
 # -----------------------------
+# Fallback destination для алертов (если не заданы ADMIN_ALERT_*).
+ALERT_CHAT_ID=
+ALERT_THREAD_ID=
 # Chat ID админских алертов.
 ADMIN_ALERT_CHAT_ID=
 # Thread ID админских алертов.

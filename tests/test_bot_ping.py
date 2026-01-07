@@ -1,5 +1,4 @@
-# tests/test_bot_ping.py
-# Smoke-тест: базовая логика ответа /ping
+"""Smoke-тест: базовая логика ответа /ping."""
 
 from bot import ping_reply_text
 

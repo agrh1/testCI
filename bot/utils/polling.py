@@ -1,3 +1,5 @@
+"""Polling очереди заявок и хранение состояния отправки уведомлений."""
+
 # bot/utils/polling.py
 from __future__ import annotations
 
