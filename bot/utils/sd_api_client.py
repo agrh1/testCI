@@ -122,6 +122,33 @@ class SdApiClient:
         logger.warning("user_exists error: %s %s", response.status_code, response.text)
         return False
 
+    def get_task(self, task_id: int, *, fields: Optional[str] = None) -> dict[str, object]:
+        url = f"{self._cfg.base_url.rstrip('/')}/api/task/{task_id}"
+        headers = self._basic_auth_header()
+        headers["Accept"] = "application/json"
+        params = {}
+        if fields:
+            params["fields"] = fields
+
+        response = requests.get(url, headers=headers, params=params, timeout=self._cfg.timeout_s)
+        if response.status_code >= 400:
+            raise RuntimeError(f"ServiceDesk error {response.status_code}: {response.text}")
+
+        data = response.json()
+        if isinstance(data, dict):
+            task = data.get("Task")
+            if isinstance(task, dict):
+                return task
+            task_form = data.get("TaskForm")
+            if isinstance(task_form, dict) and isinstance(task_form.get("Task"), dict):
+                return task_form["Task"]
+            tasks = data.get("Tasks")
+            if isinstance(tasks, list) and tasks:
+                first = tasks[0]
+                if isinstance(first, dict):
+                    return first
+        return data if isinstance(data, dict) else {"raw_response": data}
+
 
     def list_tasks_changed_since(
         self,

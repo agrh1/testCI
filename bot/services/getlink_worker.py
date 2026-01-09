@@ -192,29 +192,34 @@ async def getlink_poll_once(
 
     changed_since = datetime.now() - timedelta(seconds=lookback_s)
     changed_since_str = changed_since.strftime("%Y-%m-%dT%H:%M:%S")
+    logger.debug(
+        "getlink_poll query: ChangedMoreThan=%s lookback_s=%s category_ids=%s",
+        changed_since_str,
+        lookback_s,
+        ",".join(sorted(service_category_ids)),
+    )
 
-    tasks: list[dict[str, object]] = []
-    tasks_by_id: dict[int, dict[str, object]] = {}
-    category_filters = sorted(service_category_ids) if service_category_ids else [None]
-    for cat_id in category_filters:
-        try:
-            batch = await asyncio.to_thread(
-                sd_api_client.list_tasks_changed_since,
-                changed_since_str,
-                fields="Id,CategoryIds,Categories",
-                category_ids=cat_id,
-                pagesize=pagesize,
-            )
-        except Exception as e:
-            logger.warning("getlink_poll list_tasks_changed_since error: %s", e)
-            return
-        for item in batch:
-            try:
-                tid = int(item.get("Id"))
-            except Exception:
-                continue
-            tasks_by_id[tid] = item
-    tasks = list(tasks_by_id.values())
+    if not service_category_ids:
+        logger.debug("getlink_poll: no service categories configured")
+        return
+
+    category_ids_filter = ",".join(sorted(service_category_ids))
+    try:
+        tasks = await asyncio.to_thread(
+            sd_api_client.list_tasks_changed_since,
+            changed_since_str,
+            fields="Id,CategoryIds,CategoriesId,Categories",
+            category_ids=category_ids_filter,
+            pagesize=pagesize,
+        )
+    except Exception as e:
+        logger.warning("getlink_poll list_tasks_changed_since error: %s", e)
+        return
+    logger.debug(
+        "getlink_poll batch: CategoryIds=%s tasks=%s",
+        category_ids_filter,
+        len(tasks),
+    )
 
     if not tasks:
         return
@@ -225,7 +230,23 @@ async def getlink_poll_once(
             continue
         task_id = str(task_id_raw)
         categories_raw = str(task.get("Categories") or "")
-        category_ids_raw = str(task.get("CategoryIds") or "")
+        category_ids_raw = str(task.get("CategoryIds") or task.get("CategoriesId") or "")
+        if not category_ids_raw:
+            try:
+                task_full = await asyncio.to_thread(
+                    sd_api_client.get_task,
+                    int(task_id),
+                    fields="Id,CategoryIds,Categories",
+                )
+                categories_raw = str(task_full.get("Categories") or categories_raw)
+                category_ids_raw = str(
+                    task_full.get("CategoryIds") or task_full.get("CategoriesId") or ""
+                )
+            except Exception as e:
+                logger.warning("getlink_poll get_task error task_id=%s: %s", task_id, e)
+        if not category_ids_raw:
+            logger.warning("getlink_poll missing CategoryIds task_id=%s", task_id)
+            continue
 
         categories = _parse_categories(categories_raw, category_ids_raw)
         getlink_entries = _find_getlink_entries(categories, service_category_ids)
