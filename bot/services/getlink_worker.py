@@ -191,20 +191,30 @@ async def getlink_poll_once(
     service_category_ids = {c.cat_id for c in service_categories if c.cat_id}
 
     changed_since = datetime.now() - timedelta(seconds=lookback_s)
-    changed_since_str = changed_since.strftime("%Y-%m-%d %H:%M:%S")
+    changed_since_str = changed_since.strftime("%Y-%m-%dT%H:%M:%S")
 
-    category_ids_filter = ",".join(sorted(service_category_ids)) or None
-    try:
-        tasks = await asyncio.to_thread(
-            sd_api_client.list_tasks_changed_since,
-            changed_since_str,
-            fields="Id,CategoryIds,Categories",
-            category_ids=category_ids_filter,
-            pagesize=pagesize,
-        )
-    except Exception as e:
-        logger.warning("getlink_poll list_tasks_changed_since error: %s", e)
-        return
+    tasks: list[dict[str, object]] = []
+    tasks_by_id: dict[int, dict[str, object]] = {}
+    category_filters = sorted(service_category_ids) if service_category_ids else [None]
+    for cat_id in category_filters:
+        try:
+            batch = await asyncio.to_thread(
+                sd_api_client.list_tasks_changed_since,
+                changed_since_str,
+                fields="Id,CategoryIds,Categories",
+                category_ids=cat_id,
+                pagesize=pagesize,
+            )
+        except Exception as e:
+            logger.warning("getlink_poll list_tasks_changed_since error: %s", e)
+            return
+        for item in batch:
+            try:
+                tid = int(item.get("Id"))
+            except Exception:
+                continue
+            tasks_by_id[tid] = item
+    tasks = list(tasks_by_id.values())
 
     if not tasks:
         return
