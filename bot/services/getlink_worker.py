@@ -44,7 +44,7 @@ def _parse_sd_category(raw: str) -> tuple[Optional[str], Optional[str]]:
     if not value:
         return None, None
     # Supported formats: "110:getlink_ml", "110|getlink_ml", "110 getlink_ml".
-    m = re.search(r"(\\d+)", value)
+    m = re.search(r"(\d+)", value)
     if m:
         cat_id = m.group(1)
         rest = value[m.end():].strip()
