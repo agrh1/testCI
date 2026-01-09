@@ -211,22 +211,58 @@ def _config_help_text() -> str:
         "\n"
         "routing:\n"
         "- rules: список правил (можно [])\n"
+        "  rule: {enabled?, dest, keywords?, service_ids?, customer_ids?}\n"
         "- default_dest: {chat_id, thread_id} (можно опустить)\n"
         "- service_id_field, customer_id_field (опционально)\n"
         "\n"
         "escalation:\n"
         "- enabled: true/false\n"
         "- если enabled=true: after_s (int), dest {chat_id, thread_id}\n"
-        "- mention, service_id_field, customer_id_field (опционально)\n"
+        "- mention (строка, например \"@duty_engineer\")\n"
+        "- service_id_field, customer_id_field (опционально)\n"
         "- filter: {keywords:[], service_ids:[], customer_ids:[]} (опционально)\n"
         "\n"
         "eventlog:\n"
-        "- rules, default_dest, service_id_field, customer_id_field (всё опционально)\n"
+        "- rules (тот же формат что и routing.rules)\n"
+        "- default_dest: {chat_id, thread_id}\n"
+        "- service_id_field, customer_id_field (опционально)\n"
         "\n"
-        "Минимальный пример:\n"
+        "Полный пример:\n"
         "{\n"
-        '  "routing": {"rules": [], "default_dest": {"chat_id": 123456789}},\n'
-        '  "escalation": {"enabled": false}\n'
+        '  "version": 0,\n'
+        '  "routing": {\n'
+        '    "rules": [\n'
+        "      {\n"
+        '        "enabled": true,\n'
+        '        "dest": {"chat_id": -100111, "thread_id": 10},\n'
+        '        "keywords": ["VIP", "P1"],\n'
+        '        "service_ids": [101, 102],\n'
+        '        "customer_ids": [5001]\n'
+        "      }\n"
+        "    ],\n"
+        '    "default_dest": {"chat_id": 123456789, "thread_id": null},\n'
+        '    "service_id_field": "ServiceId",\n'
+        '    "customer_id_field": "CustomerId"\n'
+        "  },\n"
+        '  "escalation": {\n'
+        '    "enabled": true,\n'
+        '    "after_s": 600,\n'
+        '    "dest": {"chat_id": -100222, "thread_id": null},\n'
+        '    "mention": "@duty_engineer",\n'
+        '    "service_id_field": "ServiceId",\n'
+        '    "customer_id_field": "CustomerId",\n'
+        '    "filter": {\n'
+        '      "keywords": ["vip"],\n'
+        '      "service_ids": [101],\n'
+        '      "customer_ids": [5001]\n'
+        "    }\n"
+        "  },\n"
+        '  "eventlog": {\n'
+        '    "rules": [],\n'
+        '    "default_dest": {"chat_id": 123456789, "thread_id": null},\n'
+        '    "service_id_field": "ServiceId",\n'
+        '    "customer_id_field": "CustomerId"\n'
+        "  }\n"
         "}"
     )
 

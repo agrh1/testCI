@@ -327,6 +327,52 @@ Redis используется как state store. Ключи с префикс�
 
 ## /config: эндпоинты и примеры
 
+### Команда бота /config
+
+- `/config` — показать текущий конфиг.
+- `/config ?` — справка по формату и полям.
+- `/config <json>` — полностью заменить конфиг (bot делает PUT /config).
+
+Важно: обновление полностью заменяет конфиг. Чтобы изменить одно поле —
+сначала получите текущий `/config`, затем отредактируйте JSON.
+
+### Схема конфига (полная форма)
+
+Топ‑уровень:
+- `routing` (обязательный)
+- `escalation` (обязательный)
+- `eventlog` (опционально, если нет — наследуется от routing)
+- `version`, `source` (можно передавать, бот их удалит)
+
+`routing`:
+- `rules`: список правил (может быть `[]`)
+  - `enabled` (bool, опционально)
+  - `dest` (обязательный): `{chat_id, thread_id}`
+  - `keywords` (list[str], опционально)
+  - `service_ids` (list[int], опционально)
+  - `customer_ids` (list[int], опционально)
+- `default_dest`: `{chat_id, thread_id}` (опционально)
+- `service_id_field` (string, опционально)
+- `customer_id_field` (string, опционально)
+
+`escalation`:
+- `enabled` (bool)
+- `after_s` (int, если enabled=true)
+- `dest`: `{chat_id, thread_id}` (если enabled=true)
+- `mention` (string, например `@duty_engineer`)
+- `service_id_field` (string, опционально)
+- `customer_id_field` (string, опционально)
+- `filter` (опционально):
+  - `keywords` (list[str])
+  - `service_ids` (list[int])
+  - `customer_ids` (list[int])
+
+`eventlog`:
+- `rules` (тот же формат, что и `routing.rules`)
+- `default_dest`: `{chat_id, thread_id}` (опционально)
+- `service_id_field` (string, опционально)
+- `customer_id_field` (string, опционально)
+
 ### Получить конфиг
 
 ```bash
@@ -347,24 +393,33 @@ curl -s -X PUT \
 
 ```json
 {
+  "version": 0,
   "routing": {
     "rules": [
       {
+        "enabled": true,
         "dest": {"chat_id": -100111, "thread_id": 10},
         "keywords": ["VIP", "P1"],
-        "service_ids": [101, 102]
+        "service_ids": [101, 102],
+        "customer_ids": [5001]
       }
     ],
-    "default_dest": {"chat_id": -1001234567890, "thread_id": null}
+    "default_dest": {"chat_id": -1001234567890, "thread_id": null},
+    "service_id_field": "ServiceId",
+    "customer_id_field": "CustomerId"
   },
   "eventlog": {
     "rules": [
       {
+        "enabled": true,
         "dest": {"chat_id": -100222, "thread_id": 5},
-        "keywords": ["Сбой", "Ошибка"]
+        "keywords": ["Сбой", "Ошибка"],
+        "service_ids": [101]
       }
     ],
-    "default_dest": {"chat_id": -1001234567890, "thread_id": null}
+    "default_dest": {"chat_id": -1001234567890, "thread_id": null},
+    "service_id_field": "ServiceId",
+    "customer_id_field": "CustomerId"
   },
   "escalation": {
     "enabled": true,
