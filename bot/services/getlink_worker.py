@@ -187,7 +187,15 @@ async def getlink_poll_once(
     pagesize: int = 200,
 ) -> None:
     services = await seafile_store.list_services(enabled_only=True)
+    logger.debug(
+        "getlink_poll services loaded: %s",
+        [(s.service_id, s.name, s.sd_category) for s in services],
+    )
     service_categories = _build_service_categories(services)
+    logger.debug(
+        "getlink_poll parsed categories: %s",
+        [(c.service.service_id, c.cat_id, c.name) for c in service_categories],
+    )
     service_category_ids = {c.cat_id for c in service_categories if c.cat_id}
 
     changed_since = datetime.now() - timedelta(seconds=lookback_s)
