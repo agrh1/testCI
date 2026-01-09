@@ -975,6 +975,7 @@ async def cmd_last_eventlog_id(message: Message, state_store: StateStore) -> Non
 async def cmd_eventlog_poll(
     message: Message,
     state_store: StateStore,
+    eventlog_filter_store,
     eventlog_login: str,
     eventlog_password: str,
     eventlog_base_url: str,
@@ -987,6 +988,7 @@ async def cmd_eventlog_poll(
     res = await eventlog_poll_once(
         notify_eventlog=notify_eventlog,
         store=state_store,
+        filter_store=eventlog_filter_store,
         login=eventlog_login,
         password=eventlog_password,
         base_url=eventlog_base_url,
@@ -1000,8 +1002,6 @@ async def cmd_eventlog_poll(
     last_item = res.get("last_item")
     err = res.get("error") or res.get("reason")
     parse_error = res.get("parse_error")
-    filter_error = res.get("filter_error")
-
     lines = [f"eventlog_poll: {'ok' if ok else 'fail'}", f"status: {status}"]
     if next_id is not None:
         lines.append(f"next_id: {next_id}")
@@ -1013,9 +1013,6 @@ async def cmd_eventlog_poll(
         lines.append(f"error: {err}")
     if parse_error:
         lines.append(f"parse_error: {parse_error}")
-    if filter_error:
-        lines.append(f"filter_error: {filter_error}")
-
     await message.answer("\n".join(lines))
 
 

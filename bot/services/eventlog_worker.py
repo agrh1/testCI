@@ -9,7 +9,8 @@ import logging
 import time
 from typing import Awaitable, Callable, Optional
 
-from bot.utils.eventlog import get_item, get_last_item, message_important_checker, parse_event
+from bot.services.eventlog_filter_store import EventlogFilterStore, match_eventlog_filter
+from bot.utils.eventlog import get_item, get_last_item, parse_event
 from bot.utils.state_store import StateStore
 
 logger = logging.getLogger("bot.eventlog")
@@ -22,6 +23,7 @@ async def eventlog_loop(
     stop_event: asyncio.Event,
     notify_eventlog: Callable[[str, list[dict]], Awaitable[None]],
     store: Optional[StateStore],
+    filter_store: Optional[EventlogFilterStore],
     login: str,
     password: str,
     base_url: str,
@@ -88,13 +90,8 @@ async def eventlog_loop(
         except Exception as e:
             logger.warning("eventlog parse error: next_id=%s err=%s", next_id, e)
             message = {}
-        is_important = False
-        try:
-            is_important = message_important_checker(message)
-        except Exception as e:
-            logger.warning("eventlog filter error: next_id=%s err=%s", next_id, e)
-
-        if is_important:
+        is_filtered = await _is_filtered(message, filter_store, next_id)
+        if not is_filtered:
             text = (
                 f"{message.get('Дата', '')} {message.get('Тип', '')}\n"
                 f"{message.get('Название', '')}\n"
@@ -107,7 +104,7 @@ async def eventlog_loop(
             except Exception as e:
                 logger.warning("eventlog notify error: event_id=%s err=%s", next_id, e)
         else:
-            logger.debug("eventlog skipped: event_id=%s", next_id)
+            logger.debug("eventlog filtered: event_id=%s", next_id)
 
         last_event_id = next_id
         _save_last_event_id(store, last_event_id)
@@ -118,6 +115,7 @@ async def eventlog_poll_once(
     *,
     notify_eventlog: Callable[[str, list[dict]], Awaitable[None]],
     store: Optional[StateStore],
+    filter_store: Optional[EventlogFilterStore],
     login: str,
     password: str,
     base_url: str,
@@ -187,14 +185,8 @@ async def eventlog_poll_once(
     except Exception as e:
         parse_error = str(e)
 
-    is_important = False
-    filter_error = None
-    try:
-        is_important = message_important_checker(message)
-    except Exception as e:
-        filter_error = str(e)
-
-    if is_important:
+    is_filtered = await _is_filtered(message, filter_store, next_id)
+    if not is_filtered:
         text = (
             f"{message.get('Дата', '')} {message.get('Тип', '')}\n"
             f"{message.get('Название', '')}\n"
@@ -214,7 +206,7 @@ async def eventlog_poll_once(
             }
         status = "notified"
     else:
-        status = "skipped"
+        status = "filtered"
 
     _save_last_event_id(store, next_id)
     return {
@@ -223,8 +215,40 @@ async def eventlog_poll_once(
         "next_id": next_id,
         "bootstrapped": bootstrapped,
         "parse_error": parse_error,
-        "filter_error": filter_error,
     }
+
+
+async def _is_filtered(
+    message: dict[str, str],
+    filter_store: Optional[EventlogFilterStore],
+    event_id: int,
+) -> bool:
+    if filter_store is None:
+        return False
+    try:
+        filters = await filter_store.list_enabled()
+    except Exception as e:
+        logger.warning("eventlog filters load error: event_id=%s err=%s", event_id, e)
+        return False
+    if not filters:
+        return False
+
+    matched_ids: list[int] = []
+    for f in filters:
+        try:
+            if match_eventlog_filter(f, message):
+                matched_ids.append(f.filter_id)
+        except Exception as e:
+            logger.warning("eventlog filter match error: event_id=%s filter_id=%s err=%s", event_id, f.filter_id, e)
+
+    if matched_ids:
+        try:
+            await filter_store.increment_hits(matched_ids)
+        except Exception as e:
+            logger.warning("eventlog filter hits update error: event_id=%s err=%s", event_id, e)
+        logger.debug("eventlog filtered by ids: event_id=%s ids=%s", event_id, matched_ids)
+        return True
+    return False
 
 
 def _load_last_event_id(store: Optional[StateStore]) -> Optional[int]:

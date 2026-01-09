@@ -20,6 +20,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from bot.config.settings import BotSettings
 from bot.handlers import commands, errors
 from bot.services.config_sync import ConfigSyncService
+from bot.services.eventlog_filter_store import EventlogFilterStore
 from bot.services.eventlog_worker import eventlog_loop
 from bot.services.notifications import NotificationService
 from bot.services.observability import ObservabilityService
@@ -99,6 +100,9 @@ async def main() -> None:
     seafile_store = SeafileServiceStore(settings.database_url)
     await seafile_store.init_schema()
 
+    eventlog_filter_store = EventlogFilterStore(settings.database_url)
+    await eventlog_filter_store.init_schema()
+
     sd_api_client = SdApiClient(
         SdApiConfig(
             base_url=settings.servicedesk_base_url,
@@ -126,6 +130,7 @@ async def main() -> None:
     dp.workflow_data["user_store"] = user_store
     dp.workflow_data["seafile_store"] = seafile_store
     dp.workflow_data["sd_api_client"] = sd_api_client
+    dp.workflow_data["eventlog_filter_store"] = eventlog_filter_store
     dp.workflow_data["config_admin_token"] = settings.config_admin_token
     dp.workflow_data["eventlog_login"] = settings.servicedesk_login
     dp.workflow_data["eventlog_password"] = settings.servicedesk_password
@@ -185,6 +190,7 @@ async def main() -> None:
                 stop_event=stop_event,
                 notify_eventlog=notify_service.notify_eventlog,
                 store=state_store,
+                filter_store=eventlog_filter_store,
                 login=settings.servicedesk_login,
                 password=settings.servicedesk_password,
                 base_url=settings.eventlog_base_url,

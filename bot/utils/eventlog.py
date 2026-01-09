@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 import requests
@@ -52,7 +53,10 @@ def get_last_item(login: str, password: str, base_url: str) -> Optional[str]:
         text = r.text.split()
         for line in text:
             if "eventlog.ivp/view/" in line:
-                last_item = line[24:29]
+                m = re.search(r"eventlog\.ivp/view/(\d+)", line)
+                if not m:
+                    continue
+                last_item = m.group(1)
                 logger.debug("eventlog get_last_item found: %s", last_item)
                 return last_item
         return None
