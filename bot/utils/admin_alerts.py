@@ -103,7 +103,16 @@ def build_no_destination_alert_text(
     return "\n".join(lines)
 
 
-def build_web_degraded_alert_text(*, health_ok: bool, ready_ok: bool, health_status: object, ready_status: object) -> str:
+def build_web_degraded_alert_text(
+    *,
+    health_ok: bool,
+    ready_ok: bool,
+    health_status: object,
+    ready_status: object,
+    health_error: Optional[str],
+    ready_error: Optional[str],
+    attempts: int,
+) -> str:
     """
     Алерт при деградации web (/health или /ready).
     """
@@ -112,6 +121,9 @@ def build_web_degraded_alert_text(*, health_ok: bool, ready_ok: bool, health_sta
         "",
         f"- health: {'ok' if health_ok else 'fail'} (status={health_status})",
         f"- ready: {'ok' if ready_ok else 'fail'} (status={ready_status})",
+        f"- health_error: {health_error or '—'}",
+        f"- ready_error: {ready_error or '—'}",
+        f"- attempts: {attempts}",
         "",
         "Action: проверь web /health и /ready.",
     ]

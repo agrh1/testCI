@@ -82,24 +82,3 @@ def parse_event(text: str) -> dict[str, str]:
     logger.debug("eventlog parse_event done: keys=%s", list(event_info.keys()))
     return event_info
 
-
-def message_important_checker(msg: dict[str, str]) -> bool:
-    if "Информация. Сервисное обслуживание БД" in msg.get("Тип", ""):
-        return False
-    if "Заявка не создана. Письмо распознано как служебное." in msg.get("Описание", ""):
-        return False
-    if "Заявка не создана. Письмо распознано как автоответ." in msg.get("Описание", ""):
-        return False
-    if "пользователь по умолчанию для аккаунта sd@tegrus.ru не определен. Заявку создать невозможно" in msg.get("Описание", ""):
-        return False
-    if "Пользователь AR удалил записи в таблицах: Task" in msg.get("Название", ""):
-        return False
-    if "не удалось найти учетные записи с почтовыми адресами:  т.к они отсутсвуют" in msg.get("Описание", ""):
-        return False
-    if "Пользователь Администратор удалил записи в таблицах: Task" in msg.get("Название", ""):
-        return False
-    if "Пользователь Беляков Андрей удалил записи в таблицах: Task" in msg.get("Название", ""):
-        return False
-    if "Письмо отправлено слишком давно" in msg.get("Описание", ""):
-        return False
-    return True

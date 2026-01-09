@@ -9,6 +9,7 @@ Observability для бота.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Optional
@@ -111,8 +112,19 @@ class ObservabilityService:
         """
         27D: алерт при деградации web (/health или /ready).
         """
-        health, ready = await self._web_client.check_health_ready(force=True)
-        if health.ok and ready.ok:
+        attempts = 3
+        last_health = None
+        last_ready = None
+        for i in range(attempts):
+            health, ready = await self._web_client.check_health_ready(force=True)
+            last_health = health
+            last_ready = ready
+            if health.ok and ready.ok:
+                return
+            if i < attempts - 1:
+                await asyncio.sleep(0.5)
+
+        if last_health is None or last_ready is None:
             return
 
         now = time.time()
@@ -130,10 +142,13 @@ class ObservabilityService:
             return
 
         text = build_web_degraded_alert_text(
-            health_ok=health.ok,
-            ready_ok=ready.ok,
-            health_status=health.status,
-            ready_status=ready.status,
+            health_ok=last_health.ok,
+            ready_ok=last_ready.ok,
+            health_status=last_health.status,
+            ready_status=last_ready.status,
+            health_error=last_health.error,
+            ready_error=last_ready.error,
+            attempts=attempts,
         )
 
         self._polling_state.last_web_alert_at = now

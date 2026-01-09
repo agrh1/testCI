@@ -135,10 +135,31 @@ curl -s http://localhost:8000/health
 - `ESCALATION_SERVICE_ID_FIELD`, `ESCALATION_CUSTOMER_ID_FIELD` — поля фильтра.
 - `ESCALATION_FILTER` — JSON‑фильтр (keywords/service_ids/customer_ids).
 
+Пример `ESCALATION_FILTER`:
+
+```json
+{
+  "keywords": ["VIP", "P1"],
+  "service_ids": [101, 102],
+  "customer_ids": [5001]
+}
+```
+
 ### Eventlog routing (fallback через env)
 
 - `EVENTLOG_DEFAULT_CHAT_ID`, `EVENTLOG_DEFAULT_THREAD_ID` — destination по умолчанию.
 - `EVENTLOG_RULES` — JSON с правилами для eventlog (keywords).
+
+Пример `EVENTLOG_RULES`:
+
+```json
+[
+  {
+    "dest": {"chat_id": -100222, "thread_id": 5},
+    "keywords": ["Сбой", "Ошибка"]
+  }
+]
+```
 
 ### Admin‑alerts и observability
 
@@ -177,6 +198,29 @@ Web хранит конфиг бота и историю версий в таб�
 Дополнительно:
 
 - `seafile_services` — список Seafile сервисов для /get_link (name/base_url/repo_id/auth_token/username/password/enabled).
+- `eventlog_filters` — фильтры eventlog (enabled/match_type/field/pattern/hits).
+
+Пример фильтров eventlog (SQL):
+
+```sql
+INSERT INTO eventlog_filters (enabled, match_type, field, pattern, comment)
+VALUES
+  (TRUE, 'contains', 'type',        'Информация. Сервисное обслуживание БД', 'legacy'),
+  (TRUE, 'contains', 'description', 'Заявка не создана. Письмо распознано как служебное.', 'legacy'),
+  (TRUE, 'contains', 'name',        'Пользователь Администратор удалил записи в таблицах: Task', 'legacy'),
+  (TRUE, 'regex',    'name',        '^Профиль:.*', 'regex по названию');
+```
+
+Поддерживаемые поля `field`:
+- `type` (Тип)
+- `description` (Описание)
+- `name` (Название)
+- `date` (Дата)
+- `any` или `*` (по всем полям)
+
+Поддерживаемые типы `match_type`:
+- `contains`
+- `regex`
 
 ## Работа с Redis
 
@@ -205,6 +249,42 @@ curl -s -X PUT \
   -H "X-Admin-Token: <admin_token>" \
   -d '{"routing": {"rules": [], "default_dest": {"chat_id": -1001}}, "eventlog": {"rules": [], "default_dest": {"chat_id": -1001}}, "escalation": {"enabled": false}}' \
   http://localhost:8000/config
+```
+
+Пример расширенного конфига:
+
+```json
+{
+  "routing": {
+    "rules": [
+      {
+        "dest": {"chat_id": -100111, "thread_id": 10},
+        "keywords": ["VIP", "P1"],
+        "service_ids": [101, 102]
+      }
+    ],
+    "default_dest": {"chat_id": -1001234567890, "thread_id": null}
+  },
+  "eventlog": {
+    "rules": [
+      {
+        "dest": {"chat_id": -100222, "thread_id": 5},
+        "keywords": ["Сбой", "Ошибка"]
+      }
+    ],
+    "default_dest": {"chat_id": -1001234567890, "thread_id": null}
+  },
+  "escalation": {
+    "enabled": true,
+    "after_s": 900,
+    "dest": {"chat_id": -100333, "thread_id": 2},
+    "mention": "@duty_engineer",
+    "filter": {
+      "keywords": ["VIP", "P1"],
+      "service_ids": [101]
+    }
+  }
+}
 ```
 
 ### История и diff
