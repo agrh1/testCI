@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -17,7 +18,7 @@ class EventlogFilter:
     filter_id: int
     field: str
     pattern: str
-    match_mode: str
+    match_type: str
     enabled: bool
     hits: int
 
@@ -44,23 +45,32 @@ class EventlogFilterStore:
                 """
                 CREATE TABLE IF NOT EXISTS eventlog_filters (
                     id SERIAL PRIMARY KEY,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    match_type TEXT NOT NULL DEFAULT 'contains',
                     field TEXT NOT NULL,
                     pattern TEXT NOT NULL,
-                    match_mode TEXT NOT NULL DEFAULT 'contains',
-                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    comment TEXT,
                     hits BIGINT NOT NULL DEFAULT 0,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
                 """
             )
+            cur.execute("ALTER TABLE eventlog_filters ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE")
+            cur.execute("ALTER TABLE eventlog_filters ADD COLUMN IF NOT EXISTS match_type TEXT NOT NULL DEFAULT 'contains'")
+            cur.execute("ALTER TABLE eventlog_filters ADD COLUMN IF NOT EXISTS field TEXT NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE eventlog_filters ADD COLUMN IF NOT EXISTS pattern TEXT NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE eventlog_filters ADD COLUMN IF NOT EXISTS comment TEXT")
+            cur.execute("ALTER TABLE eventlog_filters ADD COLUMN IF NOT EXISTS hits BIGINT NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE eventlog_filters ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()")
+            cur.execute("ALTER TABLE eventlog_filters ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()")
 
     def _row_to_filter(self, row) -> EventlogFilter:
         return EventlogFilter(
             filter_id=int(row["id"]),
             field=str(row["field"] or ""),
             pattern=str(row["pattern"] or ""),
-            match_mode=str(row["match_mode"] or "contains"),
+            match_type=str(row["match_type"] or "contains"),
             enabled=bool(row["enabled"]),
             hits=int(row["hits"] or 0),
         )
@@ -69,7 +79,7 @@ class EventlogFilterStore:
         with self._connect() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, field, pattern, match_mode, enabled, hits
+                SELECT id, field, pattern, match_type, enabled, hits
                 FROM eventlog_filters
                 WHERE enabled = TRUE
                 ORDER BY id ASC
@@ -95,19 +105,36 @@ class EventlogFilterStore:
 def match_eventlog_filter(flt: EventlogFilter, message: dict[str, str]) -> bool:
     """
     Проверяет, сработал ли фильтр.
-    match_mode поддерживает только 'contains' (как в старом боте).
+    match_type поддерживает 'contains' и 'regex'.
     """
-    if flt.match_mode != "contains":
-        return False
-    field = flt.field.strip().lower()
+    match_type = flt.match_type.strip().lower()
+    raw_field = flt.field.strip()
+    field = raw_field.lower()
     pattern = flt.pattern
     if not pattern:
         return False
+    target = _resolve_target(field, raw_field, message)
+    if match_type == "contains":
+        return pattern in target
+    if match_type == "regex":
+        try:
+            return re.search(pattern, target) is not None
+        except re.error:
+            return False
+    return False
 
+
+def _resolve_target(field: str, raw_field: str, message: dict[str, str]) -> str:
+    mapping = {
+        "description": "Описание",
+        "type": "Тип",
+        "name": "Название",
+        "date": "Дата",
+    }
     if field in {"any", "*"}:
-        target = " ".join(v for v in message.values() if isinstance(v, str))
-    else:
-        target = message.get(flt.field, "")
-
-    return pattern in target
-
+        return " ".join(v for v in message.values() if isinstance(v, str))
+    if field in mapping:
+        return message.get(mapping[field], "")
+    if raw_field in message:
+        return message.get(raw_field, "")
+    return message.get(field, "")
