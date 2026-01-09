@@ -31,7 +31,7 @@ from bot import ping_reply_text
 from bot.config.settings import get_env
 from bot.middlewares.access_control import AccessControlMiddleware, AccessPolicy
 from bot.services.config_sync import ConfigSyncService
-from bot.services.eventlog_worker import EVENTLOG_STATE_KEY
+from bot.services.eventlog_worker import EVENTLOG_STATE_KEY, eventlog_poll_once
 from bot.services.seafile_store import SeafileServiceStore
 from bot.services.user_store import TgProfile, UserStore
 from bot.utils.escalation import EscalationFilter
@@ -94,6 +94,7 @@ def register_handlers(dp: Dispatcher) -> None:
     admin_router.message.register(cmd_share_contact_phone, _is_pending_share_contact)
     admin_router.message.register(cmd_config_diff, Command("config_diff"))
     admin_router.message.register(cmd_last_eventlog_id, Command("last_eventlog_id"))
+    admin_router.message.register(cmd_eventlog_poll, Command("eventlog_poll"))
 
     user_router.callback_query.register(cb_reset_password_cancel, F.data == "rp:cancel")
     user_router.callback_query.register(
@@ -272,6 +273,7 @@ async def cmd_help_admin(message: Message) -> None:
         "- /share_contact <id> <phone>\n"
         "- /config_diff <from> <to>\n"
         "- /last_eventlog_id [set <id>]\n"
+        "- /eventlog_poll\n"
         "- /help_admin"
     )
 
@@ -968,6 +970,53 @@ async def cmd_last_eventlog_id(message: Message, state_store: StateStore) -> Non
         return
 
     await message.answer("Формат: /last_eventlog_id или /last_eventlog_id set <id>")
+
+
+async def cmd_eventlog_poll(
+    message: Message,
+    state_store: StateStore,
+    eventlog_login: str,
+    eventlog_password: str,
+    eventlog_base_url: str,
+    eventlog_start_id: int,
+    notify_eventlog,
+) -> None:
+    """
+    Принудительный одиночный прогон eventlog.
+    """
+    res = await eventlog_poll_once(
+        notify_eventlog=notify_eventlog,
+        store=state_store,
+        login=eventlog_login,
+        password=eventlog_password,
+        base_url=eventlog_base_url,
+        start_event_id=eventlog_start_id,
+    )
+
+    ok = res.get("ok")
+    status = res.get("status")
+    next_id = res.get("next_id")
+    bootstrapped = res.get("bootstrapped")
+    last_item = res.get("last_item")
+    err = res.get("error") or res.get("reason")
+    parse_error = res.get("parse_error")
+    filter_error = res.get("filter_error")
+
+    lines = [f"eventlog_poll: {'ok' if ok else 'fail'}", f"status: {status}"]
+    if next_id is not None:
+        lines.append(f"next_id: {next_id}")
+    if bootstrapped is not None:
+        lines.append(f"bootstrapped: {bootstrapped}")
+    if last_item is not None:
+        lines.append(f"last_item: {last_item}")
+    if err:
+        lines.append(f"error: {err}")
+    if parse_error:
+        lines.append(f"parse_error: {parse_error}")
+    if filter_error:
+        lines.append(f"filter_error: {filter_error}")
+
+    await message.answer("\n".join(lines))
 
 
 async def cmd_user_add(message: Message, user_store: UserStore) -> None:

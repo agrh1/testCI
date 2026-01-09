@@ -114,6 +114,119 @@ async def eventlog_loop(
         logger.debug("eventlog saved last_event_id=%s", last_event_id)
 
 
+async def eventlog_poll_once(
+    *,
+    notify_eventlog: Callable[[str, list[dict]], Awaitable[None]],
+    store: Optional[StateStore],
+    login: str,
+    password: str,
+    base_url: str,
+    start_event_id: int = 0,
+) -> dict[str, object]:
+    """
+    Выполняет одну итерацию обработки eventlog.
+    Возвращает статус и детали для диагностических команд.
+    """
+    if not login or not password or not base_url:
+        return {
+            "ok": False,
+            "status": "disabled",
+            "reason": "missing credentials or base_url",
+        }
+
+    bootstrapped = False
+    last_event_id = _load_last_event_id(store)
+    if last_event_id is None or last_event_id <= 0:
+        bootstrapped = True
+        last_event_id = await _bootstrap_event_id(
+            login=login,
+            password=password,
+            base_url=base_url,
+            start_event_id=start_event_id,
+        )
+        if last_event_id and last_event_id > 0:
+            _save_last_event_id(store, last_event_id)
+
+    if not last_event_id or last_event_id <= 0:
+        return {
+            "ok": False,
+            "status": "bootstrap_failed",
+            "bootstrapped": bootstrapped,
+        }
+
+    next_id = last_event_id + 1
+    try:
+        res = await asyncio.to_thread(get_item, next_id, login, password, base_url)
+    except Exception as e:
+        return {
+            "ok": False,
+            "status": "get_item_error",
+            "next_id": next_id,
+            "error": str(e),
+            "bootstrapped": bootstrapped,
+        }
+
+    if res is None:
+        last_item = None
+        try:
+            last_item = await asyncio.to_thread(get_last_item, login, password, base_url)
+        except Exception:
+            last_item = None
+        return {
+            "ok": True,
+            "status": "no_item",
+            "next_id": next_id,
+            "last_item": last_item,
+            "bootstrapped": bootstrapped,
+        }
+
+    message: dict[str, str] = {}
+    parse_error = None
+    try:
+        message = await asyncio.to_thread(parse_event, res)
+    except Exception as e:
+        parse_error = str(e)
+
+    is_important = False
+    filter_error = None
+    try:
+        is_important = message_important_checker(message)
+    except Exception as e:
+        filter_error = str(e)
+
+    if is_important:
+        text = (
+            f"{message.get('Дата', '')} {message.get('Тип', '')}\n"
+            f"{message.get('Название', '')}\n"
+            f"{message.get('Описание', '')[:300]}"
+        )
+        item = {"Name": f"{message.get('Тип', '')} {message.get('Название', '')}".strip()}
+        try:
+            await notify_eventlog(text, [item])
+        except Exception as e:
+            _save_last_event_id(store, next_id)
+            return {
+                "ok": False,
+                "status": "notify_error",
+                "next_id": next_id,
+                "error": str(e),
+                "bootstrapped": bootstrapped,
+            }
+        status = "notified"
+    else:
+        status = "skipped"
+
+    _save_last_event_id(store, next_id)
+    return {
+        "ok": True,
+        "status": status,
+        "next_id": next_id,
+        "bootstrapped": bootstrapped,
+        "parse_error": parse_error,
+        "filter_error": filter_error,
+    }
+
+
 def _load_last_event_id(store: Optional[StateStore]) -> Optional[int]:
     if store is None:
         return None

@@ -127,6 +127,10 @@ async def main() -> None:
     dp.workflow_data["seafile_store"] = seafile_store
     dp.workflow_data["sd_api_client"] = sd_api_client
     dp.workflow_data["config_admin_token"] = settings.config_admin_token
+    dp.workflow_data["eventlog_login"] = settings.servicedesk_login
+    dp.workflow_data["eventlog_password"] = settings.servicedesk_password
+    dp.workflow_data["eventlog_base_url"] = settings.eventlog_base_url
+    dp.workflow_data["eventlog_start_id"] = settings.eventlog_start_id
 
     dp.errors.register(errors.on_error)
     commands.register_handlers(dp)
@@ -153,6 +157,7 @@ async def main() -> None:
         logger=logger,
         observability=observability,
     )
+    dp.workflow_data["notify_eventlog"] = notify_service.notify_eventlog
 
     polling_task = asyncio.create_task(
         polling_open_queue_loop(
