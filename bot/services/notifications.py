@@ -16,6 +16,7 @@ from aiogram import Bot
 
 from bot.services.config_sync import ConfigSyncService
 from bot.services.observability import ObservabilityService
+from bot.utils.escalation import EscalationAction
 from bot.utils.notify_router import pick_destinations
 from bot.utils.polling import PollingState
 from bot.utils.runtime_config import RuntimeConfig
@@ -55,6 +56,8 @@ class NotificationService:
             default_dest=self._runtime_config.routing.default_dest,
             service_id_field=self._runtime_config.routing.service_id_field,
             customer_id_field=self._runtime_config.routing.customer_id_field,
+            creator_id_field=self._runtime_config.routing.creator_id_field,
+            creator_company_id_field=self._runtime_config.routing.creator_company_id_field,
         )
         if not dests:
             await self._observability.handle_no_destination(items)
@@ -76,6 +79,8 @@ class NotificationService:
             default_dest=cfg.default_dest,
             service_id_field=cfg.service_id_field,
             customer_id_field=cfg.customer_id_field,
+            creator_id_field=cfg.creator_id_field,
+            creator_company_id_field=cfg.creator_company_id_field,
         )
         if not dests:
             self._logger.warning("eventlog: no destinations configured")
@@ -84,19 +89,23 @@ class NotificationService:
         for d in dests:
             await self._bot.send_message(chat_id=d.chat_id, message_thread_id=d.thread_id, text=text)
 
-    async def notify_escalation(self, items: list[dict], _marker: str) -> None:
+    async def notify_escalation(self, items: list[EscalationAction], _marker: str) -> None:
         """
         Эскалации — отдельный поток сообщений.
         """
         await self._config_sync.refresh()
-        if not self._runtime_config.escalation.enabled or self._runtime_config.escalation.dest is None:
+        if not self._runtime_config.escalation.enabled:
             return
 
-        text = _build_escalation_text(items, mention=self._runtime_config.escalation.mention)
-        d = self._runtime_config.escalation.dest
-        await self._bot.send_message(chat_id=d.chat_id, message_thread_id=d.thread_id, text=text)
+        for action in items:
+            text = _build_escalation_text(action.items, mention=action.mention)
+            await self._bot.send_message(
+                chat_id=action.dest.chat_id,
+                message_thread_id=action.dest.thread_id,
+                text=text,
+            )
 
-    def get_escalations(self, items: list[dict]) -> list[dict]:
+    def get_escalations(self, items: list[dict]) -> list[EscalationAction]:
         """
         Возвращает тикеты, которые должны попасть в эскалацию.
         """

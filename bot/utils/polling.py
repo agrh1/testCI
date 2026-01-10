@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
 from bot.services.service_icon_store import ServiceIconStore
+from bot.utils.escalation import EscalationAction
 from bot.utils.sd_state import make_ids_snapshot_hash, normalize_tasks_for_message
 from bot.utils.sd_web_client import SdOpenResult, SdWebClient
 from bot.utils.state_store import StateStore
@@ -183,9 +184,9 @@ async def polling_open_queue_loop(
     # Основное уведомление (список) — только при изменении состава очереди
     notify_main: Callable[[list[dict], str], Awaitable[None]],
     # Эскалация — дополнительно, может сработать без изменения очереди
-    notify_escalation: Optional[Callable[[list[dict], str], Awaitable[None]]] = None,
+    notify_escalation: Optional[Callable[[list[EscalationAction], str], Awaitable[None]]] = None,
     # Функция, которая возвращает "тикеты для эскалации" на текущем цикле
-    get_escalations: Optional[Callable[[list[dict]], list[dict]]] = None,
+    get_escalations: Optional[Callable[[list[dict]], list[EscalationAction]]] = None,
     # Обновление runtime-конфига (если есть)
     refresh_config: Optional[Callable[[], Awaitable[None]]] = None,
     base_interval_s: float = 30.0,

@@ -34,3 +34,19 @@ def test_validate_config_invalid_dest() -> None:
     }
     with pytest.raises(ConfigValidationError):
         validate_config(cfg)
+
+
+def test_validate_config_escalation_rules() -> None:
+    cfg = {
+        "routing": {"rules": [], "default_dest": {"chat_id": 2, "thread_id": None}},
+        "escalation": {
+            "enabled": True,
+            "after_s": 300,
+            "mention": "@duty",
+            "rules": [
+                {"dest": {"chat_id": 10, "thread_id": None}, "keywords": ["vip"]},
+                {"dest": {"chat_id": 11, "thread_id": 1}, "service_ids": [101]},
+            ],
+        },
+    }
+    validate_config(cfg)

@@ -114,6 +114,7 @@ curl -s http://localhost:8000/health
 
 - `ROUTES_DEFAULT_CHAT_ID`, `ROUTES_DEFAULT_THREAD_ID` — destination по умолчанию.
 - `ROUTES_SERVICE_ID_FIELD`, `ROUTES_CUSTOMER_ID_FIELD` — имена полей в заявке.
+- `ROUTES_CREATOR_ID_FIELD`, `ROUTES_CREATOR_COMPANY_ID_FIELD` — имена полей CreatorId/CreatorCompanyId.
 - `ROUTES_RULES` — JSON с правилами маршрутизации.
 
 Пример `ROUTES_RULES`:
@@ -124,7 +125,9 @@ curl -s http://localhost:8000/health
     "dest": {"chat_id": -100111, "thread_id": 10},
     "keywords": ["VIP", "P1"],
     "service_ids": [101, 102],
-    "customer_ids": [5001]
+    "customer_ids": [5001],
+    "creator_ids": [7001],
+    "creator_company_ids": [9001]
   }
 ]
 ```
@@ -134,9 +137,11 @@ curl -s http://localhost:8000/health
 - `ESCALATION_ENABLED` — включить эскалацию (1/0).
 - `ESCALATION_AFTER_S` — через сколько секунд эскалировать.
 - `ESCALATION_DEST_CHAT_ID`, `ESCALATION_DEST_THREAD_ID` — destination эскалации.
-- `ESCALATION_MENTION` — кого упомянуть.
+- `ESCALATION_MENTION` — базовый mention.
 - `ESCALATION_SERVICE_ID_FIELD`, `ESCALATION_CUSTOMER_ID_FIELD` — поля фильтра.
-- `ESCALATION_FILTER` — JSON‑фильтр (keywords/service_ids/customer_ids).
+- `ESCALATION_CREATOR_ID_FIELD`, `ESCALATION_CREATOR_COMPANY_ID_FIELD` — поля CreatorId/CreatorCompanyId.
+- `ESCALATION_RULES` — JSON‑правила эскалации (если задано, перекрывает ESCALATION_FILTER).
+- `ESCALATION_FILTER` — JSON‑фильтр (keywords/service_ids/customer_ids/creator_ids/creator_company_ids).
 
 Пример `ESCALATION_FILTER`:
 
@@ -144,14 +149,31 @@ curl -s http://localhost:8000/health
 {
   "keywords": ["VIP", "P1"],
   "service_ids": [101, 102],
-  "customer_ids": [5001]
+  "customer_ids": [5001],
+  "creator_ids": [7001],
+  "creator_company_ids": [9001]
 }
+```
+
+Пример `ESCALATION_RULES`:
+
+```json
+[
+  {
+    "dest": {"chat_id": -100333, "thread_id": 2},
+    "mention": "@vip_duty",
+    "keywords": ["VIP"],
+    "creator_ids": [7001]
+  }
+]
 ```
 
 ### Eventlog routing (fallback через env)
 
 - `EVENTLOG_DEFAULT_CHAT_ID`, `EVENTLOG_DEFAULT_THREAD_ID` — destination по умолчанию.
-- `EVENTLOG_RULES` — JSON с правилами для eventlog (keywords).
+- `EVENTLOG_RULES` — JSON с правилами для eventlog (тот же формат, что и routing).
+- `EVENTLOG_SERVICE_ID_FIELD`, `EVENTLOG_CUSTOMER_ID_FIELD` — имена полей в заявке.
+- `EVENTLOG_CREATOR_ID_FIELD`, `EVENTLOG_CREATOR_COMPANY_ID_FIELD` — имена полей CreatorId/CreatorCompanyId.
 
 Пример `EVENTLOG_RULES`:
 
@@ -360,27 +382,40 @@ Redis используется как state store. Ключи с префикс�
   - `keywords` (list[str], опционально)
   - `service_ids` (list[int], опционально)
   - `customer_ids` (list[int], опционально)
+  - `creator_ids` (list[int], опционально)
+  - `creator_company_ids` (list[int], опционально)
 - `default_dest`: `{chat_id, thread_id}` (опционально)
 - `service_id_field` (string, опционально)
 - `customer_id_field` (string, опционально)
+- `creator_id_field` (string, опционально)
+- `creator_company_id_field` (string, опционально)
 
 `escalation`:
 - `enabled` (bool)
 - `after_s` (int, если enabled=true)
-- `dest`: `{chat_id, thread_id}` (если enabled=true)
-- `mention` (string, например `@duty_engineer`)
+- `mention` (string, например `@duty_engineer`) — базовый mention
+- `rules` (опционально): список правил
+  - `enabled` (bool, опционально)
+  - `dest` (опционально): `{chat_id, thread_id}`
+  - `mention` (string, опционально)
+  - `keywords` (list[str], опционально)
+  - `service_ids` (list[int], опционально)
+  - `customer_ids` (list[int], опционально)
+  - `creator_ids` (list[int], опционально)
+  - `creator_company_ids` (list[int], опционально)
+- `dest` + `filter` (устаревший одиночный режим, если `rules` не задан)
 - `service_id_field` (string, опционально)
 - `customer_id_field` (string, опционально)
-- `filter` (опционально):
-  - `keywords` (list[str])
-  - `service_ids` (list[int])
-  - `customer_ids` (list[int])
+- `creator_id_field` (string, опционально)
+- `creator_company_id_field` (string, опционально)
 
 `eventlog`:
 - `rules` (тот же формат, что и `routing.rules`)
 - `default_dest`: `{chat_id, thread_id}` (опционально)
 - `service_id_field` (string, опционально)
 - `customer_id_field` (string, опционально)
+- `creator_id_field` (string, опционально)
+- `creator_company_id_field` (string, опционально)
 
 ### Получить конфиг
 
@@ -410,12 +445,16 @@ curl -s -X PUT \
         "dest": {"chat_id": -100111, "thread_id": 10},
         "keywords": ["VIP", "P1"],
         "service_ids": [101, 102],
-        "customer_ids": [5001]
+        "customer_ids": [5001],
+        "creator_ids": [7001],
+        "creator_company_ids": [9001]
       }
     ],
     "default_dest": {"chat_id": -1001234567890, "thread_id": null},
     "service_id_field": "ServiceId",
-    "customer_id_field": "CustomerId"
+    "customer_id_field": "CustomerId",
+    "creator_id_field": "CreatorId",
+    "creator_company_id_field": "CreatorCompanyId"
   },
   "eventlog": {
     "rules": [
@@ -428,17 +467,28 @@ curl -s -X PUT \
     ],
     "default_dest": {"chat_id": -1001234567890, "thread_id": null},
     "service_id_field": "ServiceId",
-    "customer_id_field": "CustomerId"
+    "customer_id_field": "CustomerId",
+    "creator_id_field": "CreatorId",
+    "creator_company_id_field": "CreatorCompanyId"
   },
   "escalation": {
     "enabled": true,
     "after_s": 900,
     "dest": {"chat_id": -100333, "thread_id": 2},
     "mention": "@duty_engineer",
-    "filter": {
-      "keywords": ["VIP", "P1"],
-      "service_ids": [101]
-    }
+    "rules": [
+      {
+        "dest": {"chat_id": -100333, "thread_id": 2},
+        "mention": "@vip_duty",
+        "keywords": ["VIP", "P1"],
+        "service_ids": [101],
+        "creator_ids": [7001]
+      }
+    ],
+    "service_id_field": "ServiceId",
+    "customer_id_field": "CustomerId",
+    "creator_id_field": "CreatorId",
+    "creator_company_id_field": "CreatorCompanyId"
   }
 }
 ```

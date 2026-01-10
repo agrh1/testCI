@@ -27,8 +27,11 @@
 - keywords по Name
 - service_ids по полю service_id_field (обычно "ServiceId")
 - customer_ids по полю customer_id_field (обычно "CustomerId")
+- creator_ids по полю creator_id_field (обычно "CreatorId")
+- creator_company_ids по полю creator_company_id_field (обычно "CreatorCompanyId")
 
 Если фильтр пустой — эскалируем всё, что висит дольше after_s.
+При нескольких правилах достаточно совпадения хотя бы одного фильтра.
 """
 from __future__ import annotations
 
@@ -36,7 +39,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
-from bot.utils.notify_router import _norm, _to_int
+from bot.utils.notify_router import Destination, _norm, _to_int
 from bot.utils.state_store import StateStore
 
 
@@ -45,6 +48,22 @@ class EscalationFilter:
     keywords: tuple[str, ...] = ()
     service_ids: tuple[int, ...] = ()
     customer_ids: tuple[int, ...] = ()
+    creator_ids: tuple[int, ...] = ()
+    creator_company_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class EscalationRule:
+    dest: Destination
+    mention: Optional[str] = None
+    flt: EscalationFilter = EscalationFilter()
+
+
+@dataclass
+class EscalationAction:
+    dest: Destination
+    mention: str
+    items: list[dict[str, Any]]
 
 
 @dataclass
@@ -53,6 +72,60 @@ class EscalationState:
     seen_at: dict[str, float]
     # id -> unix ts when escalated (to avoid repeats)
     escalated_at: dict[str, float]
+
+
+def match_escalation_filter(
+    item: dict[str, Any],
+    flt: EscalationFilter,
+    *,
+    service_id_field: str,
+    customer_id_field: str,
+    creator_id_field: str,
+    creator_company_id_field: str,
+) -> bool:
+    """
+    True если тикет подпадает под фильтр эскалации.
+    Если фильтр пустой — эскалируем всё.
+    """
+    if not (
+        flt.keywords
+        or flt.service_ids
+        or flt.customer_ids
+        or flt.creator_ids
+        or flt.creator_company_ids
+    ):
+        return True
+
+    ok = False
+
+    if flt.keywords:
+        name = item.get("Name")
+        if isinstance(name, str):
+            n = _norm(name)
+            if any(k in n for k in flt.keywords):
+                ok = True
+
+    if not ok and flt.service_ids and service_id_field:
+        sid = _to_int(item.get(service_id_field))
+        if sid is not None and sid in flt.service_ids:
+            ok = True
+
+    if not ok and flt.customer_ids and customer_id_field:
+        cid = _to_int(item.get(customer_id_field))
+        if cid is not None and cid in flt.customer_ids:
+            ok = True
+
+    if not ok and flt.creator_ids and creator_id_field:
+        cid = _to_int(item.get(creator_id_field))
+        if cid is not None and cid in flt.creator_ids:
+            ok = True
+
+    if not ok and flt.creator_company_ids and creator_company_id_field:
+        ccid = _to_int(item.get(creator_company_id_field))
+        if ccid is not None and ccid in flt.creator_company_ids:
+            ok = True
+
+    return ok
 
 
 class EscalationManager:
@@ -64,14 +137,18 @@ class EscalationManager:
         after_s: int,
         service_id_field: str,
         customer_id_field: str,
-        flt: EscalationFilter,
+        creator_id_field: str,
+        creator_company_id_field: str,
+        rules: Sequence[EscalationRule],
     ) -> None:
         self._store = store
         self._store_key = store_key
         self._after_s = after_s
         self._service_id_field = service_id_field
         self._customer_id_field = customer_id_field
-        self._filter = flt
+        self._creator_id_field = creator_id_field
+        self._creator_company_id_field = creator_company_id_field
+        self._rules = tuple(rules)
 
         self._state = EscalationState(seen_at={}, escalated_at={})
         self._load()
@@ -99,35 +176,20 @@ class EscalationManager:
     def _id_of(self, item: dict[str, Any]) -> Optional[int]:
         return _to_int(item.get("Id"))
 
-    def _match_item_filter(self, item: dict[str, Any]) -> bool:
-        """
-        True если тикет подпадает под фильтр эскалации.
-        Если фильтр пустой — эскалируем всё.
-        """
-        f = self._filter
-        if not f.keywords and not f.service_ids and not f.customer_ids:
-            return True
-
-        ok = False
-
-        if f.keywords:
-            name = item.get("Name")
-            if isinstance(name, str):
-                n = _norm(name)
-                if any(k in n for k in f.keywords):
-                    ok = True
-
-        if not ok and f.service_ids and self._service_id_field:
-            sid = _to_int(item.get(self._service_id_field))
-            if sid is not None and sid in f.service_ids:
-                ok = True
-
-        if not ok and f.customer_ids and self._customer_id_field:
-            cid = _to_int(item.get(self._customer_id_field))
-            if cid is not None and cid in f.customer_ids:
-                ok = True
-
-        return ok
+    def _match_item_rules(self, item: dict[str, Any]) -> bool:
+        if not self._rules:
+            return False
+        for rule in self._rules:
+            if match_escalation_filter(
+                item,
+                rule.flt,
+                service_id_field=self._service_id_field,
+                customer_id_field=self._customer_id_field,
+                creator_id_field=self._creator_id_field,
+                creator_company_id_field=self._creator_company_id_field,
+            ):
+                return True
+        return False
 
     def process(self, items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         """
@@ -164,7 +226,7 @@ class EscalationManager:
             if not it:
                 continue
 
-            if not self._match_item_filter(it):
+            if not self._match_item_rules(it):
                 continue
 
             seen_at = self._state.seen_at.get(k, now)

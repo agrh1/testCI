@@ -16,6 +16,8 @@ MVP критерии совпадения
 - keywords: подстрока в Name (case-insensitive)
 - service_ids: item[service_id_field] попадает в список
 - customer_ids: item[customer_id_field] попадает в список
+- creator_ids: item[creator_id_field] попадает в список
+- creator_company_ids: item[creator_company_id_field] попадает в список
 
 Если ни одно правило не сработало — используем default destination.
 
@@ -25,7 +27,9 @@ MVP критерии совпадения
     "dest": {"chat_id": -100111, "thread_id": 10},
     "keywords": ["VIP", "P1"],
     "service_ids": [101, 102],
-    "customer_ids": [5001]
+    "customer_ids": [5001],
+    "creator_ids": [7001],
+    "creator_company_ids": [9001]
   }
 ]
 """
@@ -49,6 +53,8 @@ class RouteRule:
     keywords: tuple[str, ...] = ()
     service_ids: tuple[int, ...] = ()
     customer_ids: tuple[int, ...] = ()
+    creator_ids: tuple[int, ...] = ()
+    creator_company_ids: tuple[int, ...] = ()
 
 
 def _norm(s: str) -> str:
@@ -113,11 +119,28 @@ def parse_rules(raw: Any) -> list[RouteRule]:
         customer_ids_raw = x.get("customer_ids", [])
         customer_ids: tuple[int, ...] = tuple(v for v in (_to_int(i) for i in customer_ids_raw) if v is not None)
 
+        creator_ids_raw = x.get("creator_ids", [])
+        creator_ids: tuple[int, ...] = tuple(v for v in (_to_int(i) for i in creator_ids_raw) if v is not None)
+
+        creator_company_ids_raw = x.get("creator_company_ids", [])
+        creator_company_ids: tuple[int, ...] = tuple(
+            v for v in (_to_int(i) for i in creator_company_ids_raw) if v is not None
+        )
+
         # Правило без критериев не разрешаем — иначе оно "матчит всё" и ломает смысл default.
-        if not keywords and not service_ids and not customer_ids:
+        if not keywords and not service_ids and not customer_ids and not creator_ids and not creator_company_ids:
             continue
 
-        rules.append(RouteRule(dest=dest, keywords=keywords, service_ids=service_ids, customer_ids=customer_ids))
+        rules.append(
+            RouteRule(
+                dest=dest,
+                keywords=keywords,
+                service_ids=service_ids,
+                customer_ids=customer_ids,
+                creator_ids=creator_ids,
+                creator_company_ids=creator_company_ids,
+            )
+        )
 
     return rules
 
@@ -148,6 +171,8 @@ def _rule_match_reason(
     names: list[str],
     service_ids_in_items: set[int],
     customer_ids_in_items: set[int],
+    creator_ids_in_items: set[int],
+    creator_company_ids_in_items: set[int],
 ) -> Optional[str]:
     """
     Возвращает текст причины совпадения или None, если правило не совпало.
@@ -168,6 +193,16 @@ def _rule_match_reason(
             if cid in customer_ids_in_items:
                 return f"customer_id {cid} matched"
 
+    if rule.creator_ids and creator_ids_in_items:
+        for cid in rule.creator_ids:
+            if cid in creator_ids_in_items:
+                return f"creator_id {cid} matched"
+
+    if rule.creator_company_ids and creator_company_ids_in_items:
+        for ccid in rule.creator_company_ids:
+            if ccid in creator_company_ids_in_items:
+                return f"creator_company_id {ccid} matched"
+
     return None
 
 
@@ -177,6 +212,8 @@ def match_destinations(
     rules: Sequence[RouteRule],
     service_id_field: str,
     customer_id_field: str,
+    creator_id_field: str,
+    creator_company_id_field: str,
 ) -> set[Destination]:
     """
     Возвращает множество destinations (чат+тред), которые должны получить уведомление.
@@ -188,6 +225,8 @@ def match_destinations(
     names = _collect_names(items)
     service_ids_in_items = _collect_int_field(items, service_id_field)
     customer_ids_in_items = _collect_int_field(items, customer_id_field)
+    creator_ids_in_items = _collect_int_field(items, creator_id_field)
+    creator_company_ids_in_items = _collect_int_field(items, creator_company_id_field)
 
     for r in rules:
         reason = _rule_match_reason(
@@ -195,6 +234,8 @@ def match_destinations(
             names=names,
             service_ids_in_items=service_ids_in_items,
             customer_ids_in_items=customer_ids_in_items,
+            creator_ids_in_items=creator_ids_in_items,
+            creator_company_ids_in_items=creator_company_ids_in_items,
         )
         if reason is not None:
             matched.add(r.dest)
@@ -208,6 +249,8 @@ def explain_matches(
     rules: Sequence[RouteRule],
     service_id_field: str,
     customer_id_field: str,
+    creator_id_field: str,
+    creator_company_id_field: str,
 ) -> list[dict[str, Any]]:
     """
     Для debug: список по каждому правилу: совпало/нет, и причина (если совпало).
@@ -215,6 +258,8 @@ def explain_matches(
     names = _collect_names(items)
     service_ids_in_items = _collect_int_field(items, service_id_field)
     customer_ids_in_items = _collect_int_field(items, customer_id_field)
+    creator_ids_in_items = _collect_int_field(items, creator_id_field)
+    creator_company_ids_in_items = _collect_int_field(items, creator_company_id_field)
 
     out: list[dict[str, Any]] = []
     for idx, r in enumerate(rules, start=1):
@@ -223,6 +268,8 @@ def explain_matches(
             names=names,
             service_ids_in_items=service_ids_in_items,
             customer_ids_in_items=customer_ids_in_items,
+            creator_ids_in_items=creator_ids_in_items,
+            creator_company_ids_in_items=creator_company_ids_in_items,
         )
         out.append(
             {
@@ -234,6 +281,8 @@ def explain_matches(
                     "keywords": list(r.keywords),
                     "service_ids": list(r.service_ids),
                     "customer_ids": list(r.customer_ids),
+                    "creator_ids": list(r.creator_ids),
+                    "creator_company_ids": list(r.creator_company_ids),
                 },
             }
         )
@@ -247,6 +296,8 @@ def pick_destinations(
     default_dest: Optional[Destination],
     service_id_field: str,
     customer_id_field: str,
+    creator_id_field: str,
+    creator_company_id_field: str,
 ) -> list[Destination]:
     """
     Итоговый список destinations:
@@ -258,6 +309,8 @@ def pick_destinations(
         rules=rules,
         service_id_field=service_id_field,
         customer_id_field=customer_id_field,
+        creator_id_field=creator_id_field,
+        creator_company_id_field=creator_company_id_field,
     )
     if matched:
         return sorted(matched, key=lambda d: (d.chat_id, d.thread_id or 0))

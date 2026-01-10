@@ -45,6 +45,8 @@ def test_match_destinations_keywords_and_ids() -> None:
         rules=rules,
         service_id_field="ServiceId",
         customer_id_field="CustomerId",
+        creator_id_field="CreatorId",
+        creator_company_id_field="CreatorCompanyId",
     )
     assert Destination(chat_id=10, thread_id=None) in matched
     assert Destination(chat_id=20, thread_id=None) in matched
@@ -62,6 +64,28 @@ def test_explain_matches_contains_reason() -> None:
         rules=rules,
         service_id_field="ServiceId",
         customer_id_field="CustomerId",
+        creator_id_field="CreatorId",
+        creator_company_id_field="CreatorCompanyId",
     )
     assert out[0]["matched"] is True
     assert "keyword" in out[0]["reason"]
+
+
+def test_match_destinations_creator_fields() -> None:
+    rules = parse_rules(
+        [
+            {"dest": {"chat_id": 30}, "creator_ids": [7001]},
+            {"dest": {"chat_id": 40}, "creator_company_ids": [9001]},
+        ]
+    )
+    items = [{"Name": "ticket", "CreatorId": 7001, "CreatorCompanyId": 9001}]
+    matched = match_destinations(
+        items=items,
+        rules=rules,
+        service_id_field="ServiceId",
+        customer_id_field="CustomerId",
+        creator_id_field="CreatorId",
+        creator_company_id_field="CreatorCompanyId",
+    )
+    assert Destination(chat_id=30, thread_id=None) in matched
+    assert Destination(chat_id=40, thread_id=None) in matched

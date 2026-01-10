@@ -29,7 +29,13 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from bot.utils.escalation import EscalationFilter, EscalationManager
+from bot.utils.escalation import (
+    EscalationAction,
+    EscalationFilter,
+    EscalationManager,
+    EscalationRule,
+    match_escalation_filter,
+)
 from bot.utils.notify_router import Destination, parse_destination, parse_rules
 from bot.utils.state_store import StateStore
 
@@ -40,6 +46,8 @@ class RoutingConfig:
     default_dest: Optional[Destination]
     service_id_field: str
     customer_id_field: str
+    creator_id_field: str
+    creator_company_id_field: str
 
 
 @dataclass
@@ -48,9 +56,11 @@ class EscalationConfig:
     after_s: int
     dest: Optional[Destination]
     mention: str
+    rules: list[EscalationRule]
     service_id_field: str
     customer_id_field: str
-    flt: EscalationFilter
+    creator_id_field: str
+    creator_company_id_field: str
 
 
 @dataclass
@@ -59,6 +69,8 @@ class EventlogConfig:
     default_dest: Optional[Destination]
     service_id_field: str
     customer_id_field: str
+    creator_id_field: str
+    creator_company_id_field: str
 
 
 class RuntimeConfig:
@@ -98,6 +110,10 @@ class RuntimeConfig:
     def _load_routing_from_env(self) -> RoutingConfig:
         service_id_field = os.getenv("ROUTES_SERVICE_ID_FIELD", "ServiceId").strip() or "ServiceId"
         customer_id_field = os.getenv("ROUTES_CUSTOMER_ID_FIELD", "CustomerId").strip() or "CustomerId"
+        creator_id_field = os.getenv("ROUTES_CREATOR_ID_FIELD", "CreatorId").strip() or "CreatorId"
+        creator_company_id_field = (
+            os.getenv("ROUTES_CREATOR_COMPANY_ID_FIELD", "CreatorCompanyId").strip() or "CreatorCompanyId"
+        )
 
         def _to_int(x: str) -> Optional[int]:
             try:
@@ -133,7 +149,67 @@ class RuntimeConfig:
             default_dest=default_dest,
             service_id_field=service_id_field,
             customer_id_field=customer_id_field,
+            creator_id_field=creator_id_field,
+            creator_company_id_field=creator_company_id_field,
         )
+
+    def _parse_escalation_filter(self, raw: Any) -> EscalationFilter:
+        if not isinstance(raw, dict):
+            return EscalationFilter()
+
+        def _ids(values: Any) -> tuple[int, ...]:
+            out: list[int] = []
+            for v in values or []:
+                if str(v).strip().isdigit():
+                    out.append(int(v))
+            return tuple(out)
+
+        keywords = tuple(
+            k.strip().lower()
+            for k in raw.get("keywords", [])
+            if isinstance(k, str) and k.strip()
+        )
+        return EscalationFilter(
+            keywords=keywords,
+            service_ids=_ids(raw.get("service_ids")),
+            customer_ids=_ids(raw.get("customer_ids")),
+            creator_ids=_ids(raw.get("creator_ids")),
+            creator_company_ids=_ids(raw.get("creator_company_ids")),
+        )
+
+    def _parse_escalation_rules(
+        self,
+        raw: Any,
+        *,
+        base_dest: Optional[Destination],
+    ) -> list[EscalationRule]:
+        if not isinstance(raw, list):
+            return []
+
+        rules: list[EscalationRule] = []
+        for idx, item in enumerate(raw, start=1):
+            if not isinstance(item, dict):
+                continue
+            if item.get("enabled") is False:
+                continue
+
+            dest = parse_destination(item.get("dest")) or base_dest
+            if dest is None:
+                self._log.error("config: escalation.rules[%s] dest is required", idx)
+                continue
+
+            mention = item.get("mention")
+            if isinstance(mention, str):
+                mention = mention.strip() or None
+            else:
+                mention = None
+
+            flt_raw = item.get("filter") if isinstance(item.get("filter"), dict) else item
+            flt = self._parse_escalation_filter(flt_raw)
+
+            rules.append(EscalationRule(dest=dest, mention=mention, flt=flt))
+
+        return rules
 
     def _load_escalation_from_env(self, routing: RoutingConfig) -> EscalationConfig:
         enabled = os.getenv("ESCALATION_ENABLED", "0").strip().lower() in ("1", "true", "yes")
@@ -162,32 +238,41 @@ class RuntimeConfig:
 
         service_id_field = os.getenv("ESCALATION_SERVICE_ID_FIELD", routing.service_id_field).strip() or routing.service_id_field
         customer_id_field = os.getenv("ESCALATION_CUSTOMER_ID_FIELD", routing.customer_id_field).strip() or routing.customer_id_field
+        creator_id_field = os.getenv("ESCALATION_CREATOR_ID_FIELD", "CreatorId").strip() or "CreatorId"
+        creator_company_id_field = (
+            os.getenv("ESCALATION_CREATOR_COMPANY_ID_FIELD", "CreatorCompanyId").strip() or "CreatorCompanyId"
+        )
 
-        flt = EscalationFilter()
-        raw = os.getenv("ESCALATION_FILTER", "").strip()
-        if raw:
+        rules: list[EscalationRule] = []
+        rules_env = os.getenv("ESCALATION_RULES")
+        if rules_env is not None:
             try:
-                jf = json.loads(raw)
-                if isinstance(jf, dict):
-                    keywords = tuple(
-                        k.strip().lower()
-                        for k in jf.get("keywords", [])
-                        if isinstance(k, str) and k.strip()
-                    )
-                    service_ids = tuple(int(x) for x in jf.get("service_ids", []) if str(x).strip().isdigit())
-                    customer_ids = tuple(int(x) for x in jf.get("customer_ids", []) if str(x).strip().isdigit())
-                    flt = EscalationFilter(keywords=keywords, service_ids=service_ids, customer_ids=customer_ids)
+                raw = rules_env.strip()
+                payload = json.loads(raw) if raw else []
+                rules = self._parse_escalation_rules(payload, base_dest=dest)
             except Exception as e:
-                self._log.error("ESCALATION_FILTER parse error: %s", e)
+                self._log.error("ESCALATION_RULES parse error: %s", e)
+        else:
+            raw = os.getenv("ESCALATION_FILTER", "").strip()
+            flt = EscalationFilter()
+            if raw:
+                try:
+                    flt = self._parse_escalation_filter(json.loads(raw))
+                except Exception as e:
+                    self._log.error("ESCALATION_FILTER parse error: %s", e)
+            if dest is not None:
+                rules = [EscalationRule(dest=dest, mention=None, flt=flt)]
 
         return EscalationConfig(
             enabled=enabled,
             after_s=after_s,
             dest=dest,
             mention=mention,
+            rules=rules,
             service_id_field=service_id_field,
             customer_id_field=customer_id_field,
-            flt=flt,
+            creator_id_field=creator_id_field,
+            creator_company_id_field=creator_company_id_field,
         )
 
     def _load_eventlog_from_env(self, routing: RoutingConfig) -> EventlogConfig:
@@ -222,12 +307,19 @@ class RuntimeConfig:
 
         service_id_field = os.getenv("EVENTLOG_SERVICE_ID_FIELD", routing.service_id_field).strip() or routing.service_id_field
         customer_id_field = os.getenv("EVENTLOG_CUSTOMER_ID_FIELD", routing.customer_id_field).strip() or routing.customer_id_field
+        creator_id_field = os.getenv("EVENTLOG_CREATOR_ID_FIELD", routing.creator_id_field).strip() or routing.creator_id_field
+        creator_company_id_field = (
+            os.getenv("EVENTLOG_CREATOR_COMPANY_ID_FIELD", routing.creator_company_id_field).strip()
+            or routing.creator_company_id_field
+        )
 
         return EventlogConfig(
             rules=rules,
             default_dest=default_dest,
             service_id_field=service_id_field,
             customer_id_field=customer_id_field,
+            creator_id_field=creator_id_field,
+            creator_company_id_field=creator_company_id_field,
         )
 
     # -----------------------------
@@ -274,12 +366,18 @@ class RuntimeConfig:
             default_dest = parse_destination(rr.get("default_dest"))
             service_id_field = (rr.get("service_id_field") or "ServiceId").strip() or "ServiceId"
             customer_id_field = (rr.get("customer_id_field") or "CustomerId").strip() or "CustomerId"
+            creator_id_field = (rr.get("creator_id_field") or "CreatorId").strip() or "CreatorId"
+            creator_company_id_field = (
+                (rr.get("creator_company_id_field") or "CreatorCompanyId").strip() or "CreatorCompanyId"
+            )
 
             new_routing = RoutingConfig(
                 rules=rules,
                 default_dest=default_dest,
                 service_id_field=service_id_field,
                 customer_id_field=customer_id_field,
+                creator_id_field=creator_id_field,
+                creator_company_id_field=creator_company_id_field,
             )
         except Exception as e:
             self._log.error("config: routing parse error: %s", e)
@@ -294,27 +392,35 @@ class RuntimeConfig:
             mention = (er.get("mention") or "@duty_engineer").strip() or "@duty_engineer"
             service_id_field = (er.get("service_id_field") or new_routing.service_id_field).strip() or new_routing.service_id_field
             customer_id_field = (er.get("customer_id_field") or new_routing.customer_id_field).strip() or new_routing.customer_id_field
+            creator_id_field = (
+                (er.get("creator_id_field") or new_routing.creator_id_field).strip()
+                or new_routing.creator_id_field
+            )
+            creator_company_id_field = (
+                (er.get("creator_company_id_field") or new_routing.creator_company_id_field).strip()
+                or new_routing.creator_company_id_field
+            )
 
-            flt = EscalationFilter()
-            jf = er.get("filter")
-            if isinstance(jf, dict):
-                keywords = tuple(
-                    k.strip().lower()
-                    for k in jf.get("keywords", [])
-                    if isinstance(k, str) and k.strip()
-                )
-                service_ids = tuple(int(x) for x in jf.get("service_ids", []) if str(x).strip().isdigit())
-                customer_ids = tuple(int(x) for x in jf.get("customer_ids", []) if str(x).strip().isdigit())
-                flt = EscalationFilter(keywords=keywords, service_ids=service_ids, customer_ids=customer_ids)
+            rules_raw = er.get("rules")
+            if rules_raw is not None:
+                rules = self._parse_escalation_rules(rules_raw, base_dest=dest)
+            else:
+                flt = EscalationFilter()
+                jf = er.get("filter")
+                if isinstance(jf, dict):
+                    flt = self._parse_escalation_filter(jf)
+                rules = [EscalationRule(dest=dest, mention=None, flt=flt)] if dest is not None else []
 
             new_escalation = EscalationConfig(
                 enabled=enabled,
                 after_s=after_s,
                 dest=dest,
                 mention=mention,
+                rules=rules,
                 service_id_field=service_id_field,
                 customer_id_field=customer_id_field,
-                flt=flt,
+                creator_id_field=creator_id_field,
+                creator_company_id_field=creator_company_id_field,
             )
         except Exception as e:
             self._log.error("config: escalation parse error: %s", e)
@@ -328,6 +434,8 @@ class RuntimeConfig:
                     default_dest=new_routing.default_dest,
                     service_id_field=new_routing.service_id_field,
                     customer_id_field=new_routing.customer_id_field,
+                    creator_id_field=new_routing.creator_id_field,
+                    creator_company_id_field=new_routing.creator_company_id_field,
                 )
             else:
                 er = eventlog_raw or {}
@@ -335,11 +443,21 @@ class RuntimeConfig:
                 default_dest = parse_destination(er.get("default_dest"))
                 service_id_field = (er.get("service_id_field") or new_routing.service_id_field).strip() or new_routing.service_id_field
                 customer_id_field = (er.get("customer_id_field") or new_routing.customer_id_field).strip() or new_routing.customer_id_field
+                creator_id_field = (
+                    (er.get("creator_id_field") or new_routing.creator_id_field).strip()
+                    or new_routing.creator_id_field
+                )
+                creator_company_id_field = (
+                    (er.get("creator_company_id_field") or new_routing.creator_company_id_field).strip()
+                    or new_routing.creator_company_id_field
+                )
                 new_eventlog = EventlogConfig(
                     rules=rules,
                     default_dest=default_dest,
                     service_id_field=service_id_field,
                     customer_id_field=customer_id_field,
+                    creator_id_field=creator_id_field,
+                    creator_company_id_field=creator_company_id_field,
                 )
         except Exception as e:
             self._log.error("config: eventlog parse error: %s", e)
@@ -381,14 +499,46 @@ class RuntimeConfig:
             after_s=self.escalation.after_s,
             service_id_field=self.escalation.service_id_field,
             customer_id_field=self.escalation.customer_id_field,
-            flt=self.escalation.flt,
+            creator_id_field=self.escalation.creator_id_field,
+            creator_company_id_field=self.escalation.creator_company_id_field,
+            rules=self.escalation.rules,
         )
 
     # -----------------------------
     # Public helpers
     # -----------------------------
 
-    def get_escalations(self, items: list[dict]) -> list[dict]:
+    def get_escalations(self, items: list[dict]) -> list[EscalationAction]:
         if self._esc_manager is None:
             return []
-        return self._esc_manager.process(items)
+
+        due = self._esc_manager.process(items)
+        if not due:
+            return []
+
+        actions: dict[tuple[int, Optional[int], str], EscalationAction] = {}
+        for it in due:
+            for rule in self.escalation.rules:
+                if not match_escalation_filter(
+                    it,
+                    rule.flt,
+                    service_id_field=self.escalation.service_id_field,
+                    customer_id_field=self.escalation.customer_id_field,
+                    creator_id_field=self.escalation.creator_id_field,
+                    creator_company_id_field=self.escalation.creator_company_id_field,
+                ):
+                    continue
+
+                dest = rule.dest or self.escalation.dest
+                if dest is None:
+                    continue
+
+                mention = rule.mention or self.escalation.mention
+                key = (dest.chat_id, dest.thread_id, mention)
+                action = actions.get(key)
+                if action is None:
+                    action = EscalationAction(dest=dest, mention=mention, items=[])
+                    actions[key] = action
+                action.items.append(it)
+
+        return list(actions.values())

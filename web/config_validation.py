@@ -48,7 +48,15 @@ def validate_escalation(escalation: Dict[str, Any]):
 
     if escalation.get("enabled"):
         _require(isinstance(escalation.get("after_s"), int), "escalation.after_s must be int")
-        validate_dest(escalation.get("dest", {}), "escalation.dest")
+        if "rules" in escalation:
+            rules = escalation.get("rules", [])
+            _require(isinstance(rules, list), "escalation.rules must be array")
+            for i, rule in enumerate(rules):
+                _require(isinstance(rule, dict), f"escalation.rules[{i}] must be object")
+                if "dest" in rule:
+                    validate_dest(rule.get("dest", {}), f"escalation.rules[{i}]")
+        else:
+            validate_dest(escalation.get("dest", {}), "escalation.dest")
 
 
 def validate_eventlog(eventlog: Dict[str, Any]):

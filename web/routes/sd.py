@@ -38,7 +38,10 @@ def sd_open() -> tuple[Any, int]:
         pagesize = 50
     pagesize = max(1, min(pagesize, 2000))
 
-    fields = (request.args.get("fields") or "Id,Name,Created,Creator,StatusId,ServiceId").strip()
+    fields = (
+        request.args.get("fields")
+        or "Id,Name,Created,Creator,CreatorId,CreatorCompanyId,StatusId,ServiceId"
+    ).strip()
     include = (request.args.get("include") or "service").strip()
     sort = (request.args.get("sort") or "Id desc").strip()
 

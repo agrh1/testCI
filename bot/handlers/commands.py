@@ -36,7 +36,7 @@ from bot.services.seafile_store import SeafileServiceStore
 from bot.services.service_icon_store import ServiceIconStore
 from bot.services.user_store import TgProfile, UserStore
 from bot.utils.env_helpers import get_version_info
-from bot.utils.escalation import EscalationFilter
+from bot.utils.escalation import match_escalation_filter
 from bot.utils.notify_router import explain_matches, pick_destinations
 from bot.utils.polling import PollingState, format_open_tasks_message
 from bot.utils.runtime_config import RuntimeConfig
@@ -212,21 +212,23 @@ def _config_help_text() -> str:
         "\n"
         "routing:\n"
         "- rules: список правил (можно [])\n"
-        "  rule: {enabled?, dest, keywords?, service_ids?, customer_ids?}\n"
+        "  rule: {enabled?, dest, keywords?, service_ids?, customer_ids?, creator_ids?, creator_company_ids?}\n"
         "- default_dest: {chat_id, thread_id} (можно опустить)\n"
-        "- service_id_field, customer_id_field (опционально)\n"
+        "- service_id_field, customer_id_field, creator_id_field, creator_company_id_field (опционально)\n"
         "\n"
         "escalation:\n"
         "- enabled: true/false\n"
-        "- если enabled=true: after_s (int), dest {chat_id, thread_id}\n"
-        "- mention (строка, например \"@duty_engineer\")\n"
-        "- service_id_field, customer_id_field (опционально)\n"
-        "- filter: {keywords:[], service_ids:[], customer_ids:[]} (опционально)\n"
+        "- after_s (int)\n"
+        "- mention (строка, например \"@duty_engineer\") — базовый mention\n"
+        "- rules: список правил (можно [])\n"
+        "  rule: {enabled?, dest?, mention?, keywords?, service_ids?, customer_ids?, creator_ids?, creator_company_ids?}\n"
+        "- dest/filter: устаревший одиночный режим (если rules не задан)\n"
+        "- service_id_field, customer_id_field, creator_id_field, creator_company_id_field (опционально)\n"
         "\n"
         "eventlog:\n"
         "- rules (тот же формат что и routing.rules)\n"
         "- default_dest: {chat_id, thread_id}\n"
-        "- service_id_field, customer_id_field (опционально)\n"
+        "- service_id_field, customer_id_field, creator_id_field, creator_company_id_field (опционально)\n"
         "\n"
         "Полный пример:\n"
         "{\n"
@@ -238,31 +240,43 @@ def _config_help_text() -> str:
         '        "dest": {"chat_id": -100111, "thread_id": 10},\n'
         '        "keywords": ["VIP", "P1"],\n'
         '        "service_ids": [101, 102],\n'
-        '        "customer_ids": [5001]\n'
+        '        "customer_ids": [5001],\n'
+        '        "creator_ids": [7001],\n'
+        '        "creator_company_ids": [9001]\n'
         "      }\n"
         "    ],\n"
         '    "default_dest": {"chat_id": 123456789, "thread_id": null},\n'
         '    "service_id_field": "ServiceId",\n'
-        '    "customer_id_field": "CustomerId"\n'
+        '    "customer_id_field": "CustomerId",\n'
+        '    "creator_id_field": "CreatorId",\n'
+        '    "creator_company_id_field": "CreatorCompanyId"\n'
         "  },\n"
         '  "escalation": {\n'
         '    "enabled": true,\n'
         '    "after_s": 600,\n'
         '    "dest": {"chat_id": -100222, "thread_id": null},\n'
         '    "mention": "@duty_engineer",\n'
+        '    "rules": [\n'
+        "      {\n"
+        '        "dest": {"chat_id": -100222, "thread_id": null},\n'
+        '        "mention": "@vip_duty",\n'
+        '        "keywords": ["vip"],\n'
+        '        "service_ids": [101],\n'
+        '        "creator_ids": [7001]\n'
+        "      }\n"
+        "    ],\n"
         '    "service_id_field": "ServiceId",\n'
         '    "customer_id_field": "CustomerId",\n'
-        '    "filter": {\n'
-        '      "keywords": ["vip"],\n'
-        '      "service_ids": [101],\n'
-        '      "customer_ids": [5001]\n'
-        "    }\n"
+        '    "creator_id_field": "CreatorId",\n'
+        '    "creator_company_id_field": "CreatorCompanyId"\n'
         "  },\n"
         '  "eventlog": {\n'
         '    "rules": [],\n'
         '    "default_dest": {"chat_id": 123456789, "thread_id": null},\n'
         '    "service_id_field": "ServiceId",\n'
-        '    "customer_id_field": "CustomerId"\n'
+        '    "customer_id_field": "CustomerId",\n'
+        '    "creator_id_field": "CreatorId",\n'
+        '    "creator_company_id_field": "CreatorCompanyId"\n'
         "  }\n"
         "}"
     )
@@ -273,8 +287,12 @@ def _build_fake_item(
     name: str,
     service_id_field: str,
     customer_id_field: str,
+    creator_id_field: str,
+    creator_company_id_field: str,
     service_id: Optional[int],
     customer_id: Optional[int],
+    creator_id: Optional[int],
+    creator_company_id: Optional[int],
 ) -> dict:
     # Минимальный объект тикета для тестовых команд.
     it = {"Id": 999999, "Name": name}
@@ -282,42 +300,12 @@ def _build_fake_item(
         it[service_id_field] = service_id
     if customer_id is not None:
         it[customer_id_field] = customer_id
+    if creator_id is not None:
+        it[creator_id_field] = creator_id
+    if creator_company_id is not None:
+        it[creator_company_id_field] = creator_company_id
     return it
 
-
-def _match_escalation_filter(item: dict, flt: EscalationFilter, service_id_field: str, customer_id_field: str) -> bool:
-    """
-    Простой матч фильтра эскалации для тестовой команды.
-    Логика совпадает с EscalationManager:
-    - если фильтр пустой -> True
-    - иначе: keyword OR service_id OR customer_id
-    """
-    if not flt.keywords and not flt.service_ids and not flt.customer_ids:
-        return True
-
-    name = item.get("Name")
-    if flt.keywords and isinstance(name, str):
-        n = name.strip().lower()
-        if any(k in n for k in flt.keywords):
-            return True
-
-    if flt.service_ids:
-        try:
-            sid = int(item.get(service_id_field))
-            if sid in flt.service_ids:
-                return True
-        except Exception:
-            pass
-
-    if flt.customer_ids:
-        try:
-            cid = int(item.get(customer_id_field))
-            if cid in flt.customer_ids:
-                return True
-        except Exception:
-            pass
-
-    return False
 
 
 async def cmd_start(message: Message, user_store: UserStore) -> None:
@@ -556,6 +544,8 @@ async def cmd_routes_test(message: Message, config_sync: ConfigSyncService, runt
     name = args.get("name", "test ticket")
     service_id = _to_int(args.get("service_id", "")) if "service_id" in args else None
     customer_id = _to_int(args.get("customer_id", "")) if "customer_id" in args else None
+    creator_id = _to_int(args.get("creator_id", "")) if "creator_id" in args else None
+    creator_company_id = _to_int(args.get("creator_company_id", "")) if "creator_company_id" in args else None
 
     # Подтягиваем конфиг (TTL-кэш внутри клиента). Ошибка не должна ломать команду.
     await config_sync.refresh(force=False)
@@ -565,8 +555,12 @@ async def cmd_routes_test(message: Message, config_sync: ConfigSyncService, runt
         name=name,
         service_id_field=routing.service_id_field,
         customer_id_field=routing.customer_id_field,
+        creator_id_field=routing.creator_id_field,
+        creator_company_id_field=routing.creator_company_id_field,
         service_id=service_id,
         customer_id=customer_id,
+        creator_id=creator_id,
+        creator_company_id=creator_company_id,
     )
     dests = pick_destinations(
         items=[fake],
@@ -574,6 +568,8 @@ async def cmd_routes_test(message: Message, config_sync: ConfigSyncService, runt
         default_dest=routing.default_dest,
         service_id_field=routing.service_id_field,
         customer_id_field=routing.customer_id_field,
+        creator_id_field=routing.creator_id_field,
+        creator_company_id_field=routing.creator_company_id_field,
     )
 
     lines = [
@@ -581,6 +577,8 @@ async def cmd_routes_test(message: Message, config_sync: ConfigSyncService, runt
         f"- Name: {name}",
         f"- {routing.service_id_field}: {service_id if service_id is not None else '—'}",
         f"- {routing.customer_id_field}: {customer_id if customer_id is not None else '—'}",
+        f"- {routing.creator_id_field}: {creator_id if creator_id is not None else '—'}",
+        f"- {routing.creator_company_id_field}: {creator_company_id if creator_company_id is not None else '—'}",
         f"- rules: {len(routing.rules)}",
         f"- config: v{runtime_config.version} ({runtime_config.source})",
         "",
@@ -600,6 +598,8 @@ async def cmd_routes_debug(message: Message, config_sync: ConfigSyncService, run
     name = args.get("name", "test ticket")
     service_id = _to_int(args.get("service_id", "")) if "service_id" in args else None
     customer_id = _to_int(args.get("customer_id", "")) if "customer_id" in args else None
+    creator_id = _to_int(args.get("creator_id", "")) if "creator_id" in args else None
+    creator_company_id = _to_int(args.get("creator_company_id", "")) if "creator_company_id" in args else None
 
     await config_sync.refresh(force=False)
 
@@ -609,8 +609,12 @@ async def cmd_routes_debug(message: Message, config_sync: ConfigSyncService, run
         name=name,
         service_id_field=routing.service_id_field,
         customer_id_field=routing.customer_id_field,
+        creator_id_field=routing.creator_id_field,
+        creator_company_id_field=routing.creator_company_id_field,
         service_id=service_id,
         customer_id=customer_id,
+        creator_id=creator_id,
+        creator_company_id=creator_company_id,
     )
 
     debug = explain_matches(
@@ -618,6 +622,8 @@ async def cmd_routes_debug(message: Message, config_sync: ConfigSyncService, run
         rules=routing.rules,
         service_id_field=routing.service_id_field,
         customer_id_field=routing.customer_id_field,
+        creator_id_field=routing.creator_id_field,
+        creator_company_id_field=routing.creator_company_id_field,
     )
 
     lines = [
@@ -625,6 +631,8 @@ async def cmd_routes_debug(message: Message, config_sync: ConfigSyncService, run
         f"- Name: {name}",
         f"- {routing.service_id_field}: {service_id if service_id is not None else '—'}",
         f"- {routing.customer_id_field}: {customer_id if customer_id is not None else '—'}",
+        f"- {routing.creator_id_field}: {creator_id if creator_id is not None else '—'}",
+        f"- {routing.creator_company_id_field}: {creator_company_id if creator_company_id is not None else '—'}",
         f"- rules: {len(routing.rules)}",
         f"- config: v{runtime_config.version} ({runtime_config.source})",
         "",
@@ -653,6 +661,8 @@ async def cmd_routes_send_test(
     name = args.get("name", "test ticket")
     service_id = _to_int(args.get("service_id", "")) if "service_id" in args else None
     customer_id = _to_int(args.get("customer_id", "")) if "customer_id" in args else None
+    creator_id = _to_int(args.get("creator_id", "")) if "creator_id" in args else None
+    creator_company_id = _to_int(args.get("creator_company_id", "")) if "creator_company_id" in args else None
 
     await config_sync.refresh(force=False)
 
@@ -662,8 +672,12 @@ async def cmd_routes_send_test(
         name=name,
         service_id_field=routing.service_id_field,
         customer_id_field=routing.customer_id_field,
+        creator_id_field=routing.creator_id_field,
+        creator_company_id_field=routing.creator_company_id_field,
         service_id=service_id,
         customer_id=customer_id,
+        creator_id=creator_id,
+        creator_company_id=creator_company_id,
     )
 
     dests = pick_destinations(
@@ -672,6 +686,8 @@ async def cmd_routes_send_test(
         default_dest=routing.default_dest,
         service_id_field=routing.service_id_field,
         customer_id_field=routing.customer_id_field,
+        creator_id_field=routing.creator_id_field,
+        creator_company_id_field=routing.creator_company_id_field,
     )
 
     if not dests:
@@ -685,6 +701,8 @@ async def cmd_routes_send_test(
         f"Name: {name}\n"
         f"{routing.service_id_field}: {service_id if service_id is not None else '—'}\n"
         f"{routing.customer_id_field}: {customer_id if customer_id is not None else '—'}\n"
+        f"{routing.creator_id_field}: {creator_id if creator_id is not None else '—'}\n"
+        f"{routing.creator_company_id_field}: {creator_company_id if creator_company_id is not None else '—'}\n"
         "Если вы это видите — доставка в этот destination работает ✅"
     )
 
@@ -713,16 +731,18 @@ async def cmd_escalation_send_test(
     runtime_config: RuntimeConfig,
 ) -> None:
     """
-    /escalation_send_test name="VIP авария" service_id=101 customer_id=5001
+    /escalation_send_test name="VIP авария" service_id=101 customer_id=5001 creator_id=7001 creator_company_id=9001
 
     Реально отправляет тестовое эскалационное сообщение в ESCALATION_DEST.
-    Перед отправкой проверяет, проходит ли заявка через ESCALATION_FILTER.
+    Перед отправкой проверяет, проходит ли заявка через escalation.rules.
     (Порог времени after_s здесь НЕ ждём — цель команды проверить доставку и конфиг.)
     """
     args = _parse_kv_args(message.text or "")
     name = args.get("name", "test ticket")
     service_id = _to_int(args.get("service_id", "")) if "service_id" in args else None
     customer_id = _to_int(args.get("customer_id", "")) if "customer_id" in args else None
+    creator_id = _to_int(args.get("creator_id", "")) if "creator_id" in args else None
+    creator_company_id = _to_int(args.get("creator_company_id", "")) if "creator_company_id" in args else None
 
     # Подтягиваем актуальный конфиг (TTL-кэш внутри клиента).
     await config_sync.refresh(force=False)
@@ -732,54 +752,106 @@ async def cmd_escalation_send_test(
         await message.answer("❌ Эскалация отключена (escalation.enabled=false)")
         return
 
-    if esc.dest is None:
-        await message.answer("❌ escalation.dest не задан (chat_id обязателен)")
+    if not esc.rules:
+        await message.answer("❌ escalation.rules пустой — нечего тестировать")
         return
 
     fake = _build_fake_item(
         name=name,
         service_id_field=esc.service_id_field,
         customer_id_field=esc.customer_id_field,
+        creator_id_field=esc.creator_id_field,
+        creator_company_id_field=esc.creator_company_id_field,
         service_id=service_id,
         customer_id=customer_id,
+        creator_id=creator_id,
+        creator_company_id=creator_company_id,
     )
 
-    matched = _match_escalation_filter(fake, esc.flt, esc.service_id_field, esc.customer_id_field)
-    if not matched:
-        await message.answer(
-            "⚠️ Заявка НЕ проходит ESCALATION_FILTER, поэтому тестовое сообщение НЕ отправляю.\n"
-            f"Параметры:\n- Name={name}\n- {esc.service_id_field}={service_id}\n- {esc.customer_id_field}={customer_id}\n"
-            f"Фильтр: keywords={list(esc.flt.keywords)} service_ids={list(esc.flt.service_ids)} customer_ids={list(esc.flt.customer_ids)}"
-        )
+    actions: dict[tuple[int, Optional[int], str], dict[str, object]] = {}
+    for idx, rule in enumerate(esc.rules, start=1):
+        if not match_escalation_filter(
+            fake,
+            rule.flt,
+            service_id_field=esc.service_id_field,
+            customer_id_field=esc.customer_id_field,
+            creator_id_field=esc.creator_id_field,
+            creator_company_id_field=esc.creator_company_id_field,
+        ):
+            continue
+
+        dest = rule.dest or esc.dest
+        if dest is None:
+            continue
+
+        mention = rule.mention or esc.mention
+        key = (dest.chat_id, dest.thread_id, mention)
+        entry = actions.get(key)
+        if entry is None:
+            entry = {"dest": dest, "mention": mention, "rule_indexes": []}
+            actions[key] = entry
+        entry["rule_indexes"].append(idx)
+
+    if not actions:
+        lines = [
+            "⚠️ Заявка не попала ни под одно правило escalation.",
+            "Параметры:",
+            f"- Name={name}",
+            f"- {esc.service_id_field}={service_id if service_id is not None else '—'}",
+            f"- {esc.customer_id_field}={customer_id if customer_id is not None else '—'}",
+            f"- {esc.creator_id_field}={creator_id if creator_id is not None else '—'}",
+            f"- {esc.creator_company_id_field}={creator_company_id if creator_company_id is not None else '—'}",
+            f"- rules: {len(esc.rules)}",
+            "Rules:",
+        ]
+        for idx, rule in enumerate(esc.rules, start=1):
+            flt = rule.flt
+            lines.append(
+                f"{idx}) keywords={list(flt.keywords)} service_ids={list(flt.service_ids)} "
+                f"customer_ids={list(flt.customer_ids)} creator_ids={list(flt.creator_ids)} "
+                f"creator_company_ids={list(flt.creator_company_ids)}"
+            )
+        await message.answer("\n".join(lines))
         return
 
     ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
-    text = (
-        "🚨 TEST MESSAGE (escalation)\n"
-        f"Time: {ts}\n"
-        f"After_s (config): {esc.after_s}\n"
-        f"{esc.mention} заберите в работу, пожалуйста.\n"
-        "\n"
-        f"- #{fake.get('Id')}: {fake.get('Name')}\n"
-        f"- {esc.service_id_field}: {service_id if service_id is not None else '—'}\n"
-        f"- {esc.customer_id_field}: {customer_id if customer_id is not None else '—'}\n"
-        "\n"
-        "Если вы это видите — доставка эскалации в ESCALATION_DEST работает ✅"
-    )
+    sent = 0
+    failed: list[str] = []
+    for entry in actions.values():
+        dest = entry["dest"]
+        mention = entry["mention"]
+        text = (
+            "🚨 TEST MESSAGE (escalation)\n"
+            f"Time: {ts}\n"
+            f"After_s (config): {esc.after_s}\n"
+            f"{mention} заберите в работу, пожалуйста.\n"
+            "\n"
+            f"- #{fake.get('Id')}: {fake.get('Name')}\n"
+            f"- {esc.service_id_field}: {service_id if service_id is not None else '—'}\n"
+            f"- {esc.customer_id_field}: {customer_id if customer_id is not None else '—'}\n"
+            f"- {esc.creator_id_field}: {creator_id if creator_id is not None else '—'}\n"
+            f"- {esc.creator_company_id_field}: {creator_company_id if creator_company_id is not None else '—'}\n"
+            "\n"
+            "Если вы это видите — доставка эскалации работает ✅"
+        )
+        try:
+            await bot.send_message(chat_id=dest.chat_id, message_thread_id=dest.thread_id, text=text)
+            sent += 1
+        except Exception as e:
+            failed.append(f"chat_id={dest.chat_id}, thread_id={dest.thread_id if dest.thread_id is not None else '—'} -> {e}")
 
-    try:
-        await bot.send_message(chat_id=esc.dest.chat_id, message_thread_id=esc.dest.thread_id, text=text)
-        await message.answer(
-            "📨 escalation_send_test: отправлено ✅\n"
-            f"- dest chat_id={esc.dest.chat_id}, thread_id={esc.dest.thread_id if esc.dest.thread_id is not None else '—'}\n"
-            f"- config: v{runtime_config.version} ({runtime_config.source})"
-        )
-    except Exception as e:
-        await message.answer(
-            "❌ escalation_send_test: не удалось отправить\n"
-            f"- dest chat_id={esc.dest.chat_id}, thread_id={esc.dest.thread_id if esc.dest.thread_id is not None else '—'}\n"
-            f"- error: {e}"
-        )
+    lines = [
+        "📨 escalation_send_test result",
+        f"- destinations: {len(actions)}",
+        f"- sent: {sent}",
+        f"- config: v{runtime_config.version} ({runtime_config.source})",
+    ]
+    if failed:
+        lines.append(f"- failed: {len(failed)}")
+        lines.append("")
+        lines.extend(failed)
+
+    await message.answer("\n".join(lines))
 
 
 async def cmd_share_phone(message: Message, user_store: UserStore) -> None:
