@@ -145,6 +145,32 @@ def build_redis_degraded_alert_text(*, error: str, last_ok_ts: Optional[float]) 
     return "\n".join(lines)
 
 
+def build_forbidden_send_alert_text(
+    *,
+    chat_id: int,
+    thread_id: Optional[int],
+    error: str,
+    context: Optional[str] = None,
+) -> str:
+    """
+    Алерт при невозможности отправить сообщение (бот не может писать пользователю).
+    """
+    lines = [
+        "⚠️ Telegram send forbidden",
+        "",
+        f"- chat_id: {chat_id}",
+        f"- thread_id: {thread_id if thread_id is not None else '—'}",
+        f"- error: {error}",
+    ]
+    if context:
+        lines.append(f"- context: {context}")
+    lines += [
+        "",
+        "Action: пользователь должен начать диалог с ботом (/start).",
+    ]
+    return "\n".join(lines)
+
+
 def build_rollbacks_alert_text(*, count: int, window_s: int, last_at: Optional[str]) -> str:
     """
     Алерт при частых rollback конфига.

@@ -380,6 +380,7 @@ Redis используется как state store. Ключи с префикс�
 
 `routing`:
 - `rules`: список правил (может быть `[]`)
+  - `name` (string, опционально)
   - `enabled` (bool, опционально)
   - `dest` (обязательный): `{chat_id, thread_id}`
   - `keywords` (list[str], опционально)
@@ -398,6 +399,7 @@ Redis используется как state store. Ключи с префикс�
 - `after_s` (int, если enabled=true)
 - `mention` (string, например `@duty_engineer`) — базовый mention
 - `rules` (опционально): список правил
+  - `name` (string, опционально)
   - `enabled` (bool, опционально)
   - `dest` (опционально): `{chat_id, thread_id}`
   - `after_s` (int, опционально) — переопределяет базовый `after_s`
@@ -450,6 +452,7 @@ curl -s -X PUT \
   "routing": {
     "rules": [
       {
+        "name": "VIP routing",
         "enabled": true,
         "dest": {"chat_id": -100111, "thread_id": 10},
         "keywords": ["VIP", "P1"],
@@ -468,6 +471,7 @@ curl -s -X PUT \
   "eventlog": {
     "rules": [
       {
+        "name": "Eventlog errors",
         "enabled": true,
         "dest": {"chat_id": -100222, "thread_id": 5},
         "keywords": ["Сбой", "Ошибка"],
@@ -487,6 +491,7 @@ curl -s -X PUT \
     "mention": "@duty_engineer",
     "rules": [
       {
+        "name": "VIP escalation",
         "dest": {"chat_id": -100333, "thread_id": 2},
         "after_s": 1800,
         "mention": "@vip_duty",
@@ -510,6 +515,7 @@ curl -s -X PUT \
   "routing": {
     "rules": [
       {
+        "name": "VIP routing",
         "enabled": true,
         "dest": {"chat_id": -1001901241849, "thread_id": 10},
         "keywords": ["VIP", "P1"],
@@ -519,6 +525,7 @@ curl -s -X PUT \
         "creator_company_ids": [9001]
       },
       {
+        "name": "Incident routing",
         "enabled": true,
         "dest": {"chat_id": -1001901241849, "thread_id": 11},
         "keywords": ["Сбой", "Авария"],
@@ -537,6 +544,7 @@ curl -s -X PUT \
   "eventlog": {
     "rules": [
       {
+        "name": "Eventlog errors",
         "enabled": true,
         "dest": {"chat_id": -1001901241849, "thread_id": 4},
         "keywords": ["Ошибка", "Сбой"],
@@ -558,6 +566,7 @@ curl -s -X PUT \
     "mention": "@duty_engineer",
     "rules": [
       {
+        "name": "VIP escalation",
         "enabled": true,
         "dest": {"chat_id": -1001901241849, "thread_id": 8432},
         "after_s": 1800,
@@ -569,6 +578,7 @@ curl -s -X PUT \
         "creator_company_ids": []
       },
       {
+        "name": "Incident escalation",
         "enabled": true,
         "dest": {"chat_id": -1001901241849, "thread_id": 8433},
         "after_s": 7200,
@@ -580,6 +590,7 @@ curl -s -X PUT \
         "creator_company_ids": [9001]
       },
       {
+        "name": "Connectivity escalation",
         "enabled": true,
         "keywords": ["Потеря связи"],
         "service_ids": [104],

@@ -13,6 +13,7 @@ import logging
 import time
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramForbiddenError
 
 from bot.services.config_sync import ConfigSyncService
 from bot.services.observability import ObservabilityService
@@ -64,7 +65,12 @@ class NotificationService:
             return
 
         for d in dests:
-            await self._bot.send_message(chat_id=d.chat_id, message_thread_id=d.thread_id, text=text)
+            await self._send_message_safe(
+                chat_id=d.chat_id,
+                thread_id=d.thread_id,
+                text=text,
+                context="routing.main",
+            )
 
     async def notify_eventlog(self, text: str, items: list[dict]) -> None:
         """
@@ -87,7 +93,12 @@ class NotificationService:
             return
 
         for d in dests:
-            await self._bot.send_message(chat_id=d.chat_id, message_thread_id=d.thread_id, text=text)
+            await self._send_message_safe(
+                chat_id=d.chat_id,
+                thread_id=d.thread_id,
+                text=text,
+                context="routing.eventlog",
+            )
 
     async def notify_escalation(self, items: list[EscalationAction], _marker: str) -> None:
         """
@@ -99,10 +110,11 @@ class NotificationService:
 
         for action in items:
             text = _build_escalation_text(action.items, mention=action.mention)
-            await self._bot.send_message(
+            await self._send_message_safe(
                 chat_id=action.dest.chat_id,
-                message_thread_id=action.dest.thread_id,
+                thread_id=action.dest.thread_id,
                 text=text,
+                context="routing.escalation",
             )
 
     def get_escalations(self, items: list[dict]) -> list[EscalationAction]:
@@ -112,6 +124,25 @@ class NotificationService:
         if not self._runtime_config.escalation.enabled:
             return []
         return self._runtime_config.get_escalations(items)
+
+    async def _send_message_safe(
+        self,
+        *,
+        chat_id: int,
+        thread_id: int | None,
+        text: str,
+        context: str,
+    ) -> None:
+        try:
+            await self._bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=text)
+        except TelegramForbiddenError as e:
+            self._logger.warning("Forbidden send to chat_id=%s: %s", chat_id, e)
+            await self._observability.handle_forbidden_send(
+                chat_id=chat_id,
+                thread_id=thread_id,
+                error=str(e),
+                context=context,
+            )
 
 def _build_escalation_text(items: list[dict], mention: str) -> str:
     # Текст собираем отдельно, чтобы notify_escalation был компактнее.

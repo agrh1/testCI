@@ -216,7 +216,13 @@ class RuntimeConfig:
             flt_raw = item.get("filter") if isinstance(item.get("filter"), dict) else item
             flt = self._parse_escalation_filter(flt_raw)
 
-            rules.append(EscalationRule(dest=dest, after_s=after_s, mention=mention, flt=flt))
+            name = item.get("name")
+            if isinstance(name, str):
+                name = name.strip() or None
+            else:
+                name = None
+
+            rules.append(EscalationRule(dest=dest, name=name, after_s=after_s, mention=mention, flt=flt))
 
         return rules
 
@@ -270,7 +276,7 @@ class RuntimeConfig:
                 except Exception as e:
                     self._log.error("ESCALATION_FILTER parse error: %s", e)
             if dest is not None:
-                rules = [EscalationRule(dest=dest, after_s=after_s, mention=None, flt=flt)]
+                rules = [EscalationRule(dest=dest, name=None, after_s=after_s, mention=None, flt=flt)]
 
         return EscalationConfig(
             enabled=enabled,
@@ -419,7 +425,7 @@ class RuntimeConfig:
                 if isinstance(jf, dict):
                     flt = self._parse_escalation_filter(jf)
                 rules = (
-                    [EscalationRule(dest=dest, after_s=after_s, mention=None, flt=flt)]
+                    [EscalationRule(dest=dest, name=None, after_s=after_s, mention=None, flt=flt)]
                     if dest is not None
                     else []
                 )

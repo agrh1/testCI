@@ -24,6 +24,7 @@ MVP критерии совпадения
 Формат ROUTES_RULES (JSON):
 [
   {
+    "name": "VIP routing",
     "dest": {"chat_id": -100111, "thread_id": 10},
     "keywords": ["VIP", "P1"],
     "service_ids": [101, 102],
@@ -50,6 +51,7 @@ class Destination:
 class RouteRule:
     """Одно правило маршрутизации."""
     dest: Destination
+    name: Optional[str] = None
     keywords: tuple[str, ...] = ()
     service_ids: tuple[int, ...] = ()
     customer_ids: tuple[int, ...] = ()
@@ -110,6 +112,12 @@ def parse_rules(raw: Any) -> list[RouteRule]:
         if dest is None:
             continue
 
+        name = x.get("name")
+        if isinstance(name, str):
+            name = name.strip() or None
+        else:
+            name = None
+
         keywords_raw = x.get("keywords", [])
         keywords: tuple[str, ...] = tuple(_norm(k) for k in keywords_raw if isinstance(k, str) and _norm(k))
 
@@ -134,6 +142,7 @@ def parse_rules(raw: Any) -> list[RouteRule]:
         rules.append(
             RouteRule(
                 dest=dest,
+                name=name,
                 keywords=keywords,
                 service_ids=service_ids,
                 customer_ids=customer_ids,
@@ -275,6 +284,7 @@ def explain_matches(
             {
                 "index": idx,
                 "dest": {"chat_id": r.dest.chat_id, "thread_id": r.dest.thread_id},
+                "name": r.name,
                 "matched": reason is not None,
                 "reason": reason,
                 "criteria": {

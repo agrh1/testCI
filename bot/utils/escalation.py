@@ -56,6 +56,7 @@ class EscalationFilter:
 @dataclass(frozen=True)
 class EscalationRule:
     dest: Destination
+    name: Optional[str] = None
     after_s: int = 0
     mention: Optional[str] = None
     flt: EscalationFilter = EscalationFilter()

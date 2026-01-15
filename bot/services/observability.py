@@ -17,6 +17,7 @@ from typing import Optional
 from aiogram import Bot
 
 from bot.utils.admin_alerts import (
+    build_forbidden_send_alert_text,
     build_no_destination_alert_text,
     build_redis_degraded_alert_text,
     build_rollbacks_alert_text,
@@ -107,6 +108,42 @@ class ObservabilityService:
             )
         except Exception as e:
             logger.exception("Failed to send admin alert: %s", e)
+
+    async def handle_forbidden_send(
+        self,
+        *,
+        chat_id: int,
+        thread_id: Optional[int],
+        error: str,
+        context: Optional[str] = None,
+    ) -> None:
+        """
+        Алерт: бот не может отправить сообщение (обычно личка без /start).
+        """
+        logger = logging.getLogger("bot.routing_observability")
+        dest_admin = parse_admin_alert_dest_from_env()
+        if dest_admin is None:
+            logger.warning(
+                "Forbidden send to chat_id=%s; ADMIN_ALERT_CHAT_ID/ALERT_CHAT_ID not set.",
+                chat_id,
+            )
+            return
+
+        alert_text = build_forbidden_send_alert_text(
+            chat_id=chat_id,
+            thread_id=thread_id,
+            error=error,
+            context=context,
+        )
+
+        try:
+            await self._bot.send_message(
+                chat_id=dest_admin.chat_id,
+                message_thread_id=dest_admin.thread_id,
+                text=alert_text,
+            )
+        except Exception as e:
+            logger.exception("Failed to send forbidden-send alert: %s", e)
 
     async def check_web(self) -> None:
         """

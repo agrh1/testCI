@@ -214,7 +214,7 @@ def _config_help_text() -> str:
         "\n"
         "routing:\n"
         "- rules: список правил (можно [])\n"
-        "  rule: {enabled?, dest, keywords?, service_ids?, customer_ids?, creator_ids?, creator_company_ids?}\n"
+        "  rule: {name?, enabled?, dest, keywords?, service_ids?, customer_ids?, creator_ids?, creator_company_ids?}\n"
         "- default_dest: {chat_id, thread_id} (можно опустить)\n"
         "- service_id_field, customer_id_field, creator_id_field, creator_company_id_field (опционально)\n"
         "\n"
@@ -223,7 +223,7 @@ def _config_help_text() -> str:
         "- after_s (int)\n"
         "- mention (строка, например \"@duty_engineer\") — базовый mention\n"
         "- rules: список правил (можно [])\n"
-        "  rule: {enabled?, dest?, mention?, after_s?, keywords?, service_ids?, customer_ids?, creator_ids?, creator_company_ids?}\n"
+        "  rule: {name?, enabled?, dest?, mention?, after_s?, keywords?, service_ids?, customer_ids?, creator_ids?, creator_company_ids?}\n"
         "  rule.after_s переопределяет базовый escalation.after_s\n"
         "- dest/filter: устаревший одиночный режим (если rules не задан)\n"
         "- service_id_field, customer_id_field, creator_id_field, creator_company_id_field (опционально)\n"
@@ -239,6 +239,7 @@ def _config_help_text() -> str:
         '  "routing": {\n'
         '    "rules": [\n'
         "      {\n"
+        '        "name": "VIP routing",\n'
         '        "enabled": true,\n'
         '        "dest": {"chat_id": -100111, "thread_id": 10},\n'
         '        "keywords": ["VIP", "P1"],\n'
@@ -261,6 +262,7 @@ def _config_help_text() -> str:
         '    "mention": "@duty_engineer",\n'
         '    "rules": [\n'
         "      {\n"
+        '        "name": "VIP escalation",\n'
         '        "dest": {"chat_id": -100222, "thread_id": null},\n'
         '        "after_s": 1800,\n'
         '        "mention": "@vip_duty",\n'
@@ -673,8 +675,12 @@ async def cmd_routes_debug(message: Message, config_sync: ConfigSyncService, run
         dest = r["dest"]
         matched = "✅ matched" if r["matched"] else "❌ not matched"
         reason = r["reason"] or "—"
+        name = r.get("name")
+        label = f"{idx})"
+        if name:
+            label = f"{label} {name}"
         lines.append(
-            f"{idx}) {matched} -> chat_id={dest['chat_id']}, thread_id={dest['thread_id'] if dest['thread_id'] is not None else '—'}"
+            f"{label} {matched} -> chat_id={dest['chat_id']}, thread_id={dest['thread_id'] if dest['thread_id'] is not None else '—'}"
         )
         lines.append(f"   reason: {reason}")
 
@@ -837,8 +843,9 @@ async def cmd_escalation_send_test(
         ]
         for idx, rule in enumerate(esc.rules, start=1):
             flt = rule.flt
+            name = f"{rule.name} " if rule.name else ""
             lines.append(
-                f"{idx}) keywords={list(flt.keywords)} service_ids={list(flt.service_ids)} "
+                f"{idx}) {name}keywords={list(flt.keywords)} service_ids={list(flt.service_ids)} "
                 f"customer_ids={list(flt.customer_ids)} creator_ids={list(flt.creator_ids)} "
                 f"creator_company_ids={list(flt.creator_company_ids)}"
             )
